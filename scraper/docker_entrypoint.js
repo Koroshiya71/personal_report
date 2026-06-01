@@ -48,8 +48,8 @@ const server = http.createServer((req, res) => {
       'Access-Control-Allow-Origin': '*'
     });
     
-    // Pull latest code, install dependencies, and rebuild the React app
-    exec('git pull && npm install && npm run build', (error, stdout, stderr) => {
+    // Reset local changes to tracked files first, pull latest code, install dependencies, and rebuild the React app
+    exec('git reset --hard HEAD && git pull && npm install && npm run build', (error, stdout, stderr) => {
       if (error) {
         console.error(`[API Error] Update failed: ${error.message}`);
         res.end(JSON.stringify({ success: false, error: error.message }));
