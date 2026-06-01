@@ -1,0 +1,53 @@
+{
+  "location": {
+    "primary": "深圳",
+    "secondary": "广州",
+    "primary_code": "440300",
+    "secondary_code": "440100"
+  },
+  "preferences": {
+    "games": {
+      "include_genres": ["RPG", "动作", "策略卡牌"],
+      "exclude_genres": ["射击", "恐怖"],
+      "art_styles": ["日系二次元"],
+      "themes": ["武士", "武侠", "仙侠"]
+    },
+    "offline_activities": {
+      "categories": ["游戏展", "漫展", "艺术展", "展览", "演出", "音乐会"]
+    },
+    "shops": {
+      "categories": ["书店", "咖啡店", "精品咖啡", "酒吧", "清吧"]
+    }
+  },
+  "sources": {
+    "rss": [
+      {
+        "name": "机核网 (Gcores)",
+        "url": "https://www.gcores.com/rss",
+        "category": "games"
+      },
+      {
+        "name": "游研社 (YYSTV)",
+        "url": "https://www.yystv.cn/rss/feed",
+        "category": "games"
+      },
+      {
+        "name": "少数派 (sspai)",
+        "url": "https://sspai.com/feed",
+        "category": "tech"
+      },
+      {
+        "name": "Solidot",
+        "url": "https://www.solidot.org/index.rss",
+        "category": "tech"
+      },
+      {
+        "name": "IT之家 (ITHome)",
+        "url": "https://www.ithome.com/rss/",
+        "category": "tech"
+      }
+    ],
+    "bangumi_api": "https://api.bgm.tv/calendar",
+    "bilibili_show_api": "https://show.bilibili.com/api/ticket/project/listV2"
+  }
+}

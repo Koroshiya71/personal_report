@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  personal-report:
+    build: .
+    container_name: personal-report
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.json:/app/config.json
+      - ./.env:/app/.env
+      - ./src/data:/app/src/data
+    environment:
+      - TZ=Asia/Shanghai
