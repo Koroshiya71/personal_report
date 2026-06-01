@@ -137,6 +137,47 @@ function filterItemsFallback(rssItems: RssItem[], preferences: any): RssItem[] {
   });
 }
 
+function isDateValidForDailyReport(timeStr: string, currentDateStr: string): boolean {
+  try {
+    // Normalize timeStr: replace '年', '月', '.' with '-' and remove '日'
+    const normalized = timeStr
+      .replace(/年|月/g, '-')
+      .replace(/日/g, '')
+      .replace(/\./g, '-');
+      
+    const dates = normalized.match(/\d{4}-\d{1,2}-\d{1,2}/g);
+    const today = new Date(currentDateStr);
+    
+    if (dates && dates.length > 0) {
+      // 1. Filter out if the event has already ended
+      const endDateStr = dates[dates.length - 1];
+      const endDate = new Date(endDateStr);
+      if (!isNaN(endDate.getTime())) {
+        today.setHours(0, 0, 0, 0);
+        endDate.setHours(0, 0, 0, 0);
+        if (endDate.getTime() < today.getTime()) {
+          return false; // Ended in the past
+        }
+      }
+
+      // 2. Filter out if the event starts too far in the future (e.g. > 90 days from today)
+      const startDateStr = dates[0];
+      const startDate = new Date(startDateStr);
+      if (!isNaN(startDate.getTime())) {
+        startDate.setHours(0, 0, 0, 0);
+        const maxFutureDate = new Date(today);
+        maxFutureDate.setDate(today.getDate() + 90); // 90 days window
+        if (startDate.getTime() > maxFutureDate.getTime()) {
+          return false; // Starts too far in the future
+        }
+      }
+    }
+  } catch (e) {
+    // Fallback: keep if parsing fails to avoid false negatives
+  }
+  return true;
+}
+
 function parseCleanJson(text: string) {
   try {
     const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -169,10 +210,12 @@ export async function processReport(
   const filteredAnime = animeCalendar.filter(item => item.weekday === todayWeekday);
   console.log(`[LLM Processor] Filtered ${filteredAnime.length} airing anime items for today (${todayWeekday})`);
 
-  // 2. Select relevant events from Bilibili shows
+  // 2. Select relevant events from Bilibili shows (filter out past and far future ones)
   const userEventCategories = preferences.offline_activities.categories;
   const filteredEvents = bilibiliShows.filter(show => {
-    return userEventCategories.some((cat: string) => show.title.includes(cat) || show.source.includes(cat));
+    const isCategoryMatch = userEventCategories.some((cat: string) => show.title.includes(cat) || show.source.includes(cat));
+    if (!isCategoryMatch) return false;
+    return isDateValidForDailyReport(show.time, currentDate);
   }).slice(0, 6);
 
   // If LLM is NOT configured, use Heuristics + Static Summaries
@@ -283,17 +326,7 @@ ${JSON.stringify(rssItems.map(item => ({ title: item.title, snippet: item.conten
 
 User Preferences:
 - Target Games: RPG, Action (动作), Strategy/Card (策略卡牌). Exclude Shooters (射击) and Horror (恐怖) games. Prefers Japanese anime art style (日系二次元), samurai (武士), Wuxia/Xianxia (武侠/仙侠) themes.
-- Target Tech: AI developments, productivity, geeks, open source, technological breakthroughs.
-
-Your Task:
-1. Games section:
-   - Select 3 to 5 high-quality articles for "games_primary". These MUST be valuable discussions, deep analyses, product reviews, or retrospectives (DO NOT select pure press release announcements). Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
-   - Select 5 to 10 standard news announcements or quick briefs for "games_secondary" (only need title, source).
-2. Tech section:
-   - Select 3 to 5 high-quality, objective, and insightful articles for "tech_primary". FILTER OUT low-quality clickbaits, flame wars, or extreme/opinionated/hostile statements. Clarify and enrich brief or confusing details in the original summaries based on your knowledge. Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
-   - Select 5 to 10 quick tech news for "tech_secondary" (only need title, source).
-
-Guidelines for writing "editor_comment" (CRITICAL FOR TONE):
+- Target Tech: AI developments, productivity, geeks, open source, technGuidelines for writing "editor_comment" (CRITICAL FOR TONE):
 - Write in a natural, colloquial, yet intellectually engaging tone in Chinese, like a real person sharing insights with a friend. Use a first-person or collaborative voice (e.g., "我感觉...", "从我们的视角来看...", "或许可以关注..."). Speak as a peer rather than an institutional authority or marketing copywriter.
 - AVOID AI-style fluff, jargon-filled marketing buzzwords, and robotic templates (e.g., do NOT start with or use phrases like "这表明了...", "总的来说...", "值得一提的是...", "该事件标志着...", "不得不说...", "展现了其独特的魅力").
 - Be rational, objective, and multi-dimensional. Do not offer simple, shallow praise or criticism. Instead, dissect design trade-offs, underlying motivations, technical constraints, or future implications in 1-2 concise, high-density sentences.
@@ -347,12 +380,20 @@ Output the results strictly as a JSON object of this structure:
     // 2. Process Local Shop and Activity Recommendations
     const searchPrompt = `
 You are a local lifestyle guide for ${location.primary} and ${location.secondary} areas.
+Today's date is: ${currentDate}
+
 The user wants recommendations for Bookstore (书店), Coffee shops (咖啡店/精品咖啡), and Bars (清吧/酒吧) in ${location.primary} (mainly) or ${location.secondary}.
 Shops Info: ${JSON.stringify(shopSearchResults)}
 CPP/Event Info: ${JSON.stringify(eventSearchResults)}
 
 Please select exactly 3 premium shops (ideally one bookstore, one cafe, one bar/pub) and compile them.
-Additionally, describe any interesting events (like CPP doujin events or art shows).
+Additionally, describe any interesting events (like CPP doujin events, exhibitions, or art shows).
+
+CRITICAL TIME REQUIREMENT:
+- You must strictly filter out and IGNORE any events that have already ended prior to today (${currentDate}). For example, do not select events that ended in 2024, 2025, or early 2026.
+- Only select events that are currently active, running, or upcoming (end date >= ${currentDate}).
+- Avoid selecting events that are too far in the future (e.g. starting more than 90 days away from ${currentDate}). Focus on events happening in the next 1-2 months.
+
 Output the results strictly as a JSON object:
 {
   "shops": [
@@ -376,6 +417,11 @@ Output the results strictly as a JSON object:
     
     if (parsedSearch.extra_events && Array.isArray(parsedSearch.extra_events)) {
       parsedSearch.extra_events.forEach((evt: any, idx: number) => {
+        // Apply programmatic filter to filter out past/future events just in case LLM misses
+        if (evt.time && !isDateValidForDailyReport(evt.time, currentDate)) {
+          console.log(`[LLM Processor] Filtering out extra event due to date range: "${evt.title}" (${evt.time})`);
+          return;
+        }
         filteredEvents.push({
           id: `search-evt-${idx}`,
           title: evt.title,
@@ -440,7 +486,11 @@ export async function processWeeklyReport(
 
   const userEventCategories = preferences.offline_activities.categories;
   const filteredEvents = bilibiliShows
-    .filter(show => userEventCategories.some((cat: string) => show.title.includes(cat) || show.source.includes(cat)))
+    .filter(show => {
+      const isCategoryMatch = userEventCategories.some((cat: string) => show.title.includes(cat) || show.source.includes(cat));
+      if (!isCategoryMatch) return false;
+      return isDateValidForDailyReport(show.time, currentDate);
+    })
     .slice(0, 15);
 
   if (!openaiClient) {
