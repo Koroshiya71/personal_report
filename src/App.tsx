@@ -182,7 +182,7 @@ function App() {
       setSelectedDate('');
     }
 
-    if (showLoading) setLoading(false);
+    setLoading(false);
   };
 
   const handleCrawl = async () => {
