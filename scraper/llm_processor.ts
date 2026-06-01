@@ -7,8 +7,14 @@ const apiKey = process.env.OPENAI_API_KEY || '';
 const baseURL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const modelName = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
-// Check if API key is a placeholder or empty
+// Secondary task configuration (e.g. for pre-screening)
+const secondaryApiKey = process.env.OPENAI_SECONDARY_API_KEY || apiKey;
+const secondaryBaseURL = process.env.OPENAI_SECONDARY_BASE_URL || baseURL;
+const secondaryModelName = process.env.OPENAI_SECONDARY_MODEL || modelName;
+
+// Check if API keys are configured (and not placeholders)
 const isApiKeyConfigured = apiKey && apiKey.trim() !== '' && !apiKey.includes('your_openai');
+const isSecondaryApiKeyConfigured = secondaryApiKey && secondaryApiKey.trim() !== '' && !secondaryApiKey.includes('your_openai');
 
 let openaiClient: OpenAI | null = null;
 if (isApiKeyConfigured) {
@@ -17,6 +23,17 @@ if (isApiKeyConfigured) {
     baseURL: baseURL,
   });
 }
+
+let secondaryOpenaiClient: OpenAI | null = null;
+if (isSecondaryApiKeyConfigured) {
+  secondaryOpenaiClient = new OpenAI({
+    apiKey: secondaryApiKey,
+    baseURL: secondaryBaseURL,
+  });
+} else if (openaiClient) {
+  secondaryOpenaiClient = openaiClient;
+}
+
 
 // Interfaces
 interface RssItem {
@@ -622,3 +639,55 @@ Highlight:
     return processWeeklyReport(dailyReports, animeCalendar, bilibiliShows, shopSearchResults, preferences, location);
   }
 }
+
+export async function selectHighValueRss(rssItems: RssItem[]): Promise<number[]> {
+  if (rssItems.length === 0) return [];
+  if (!secondaryOpenaiClient) {
+    console.log('[LLM Processor] Secondary OpenAI client not configured. Selecting first 2 items programmatically.');
+    return [0, 1].filter(i => i < rssItems.length);
+  }
+
+  try {
+    console.log('[LLM Processor] Selecting high-value RSS items via LLM...');
+    // We map RSS items with indices so LLM can easily refer to them by index
+    const listForPrompt = rssItems.map((item, idx) => ({
+      index: idx,
+      title: item.title,
+      source: item.source,
+      category: item.category,
+      snippet: item.contentSnippet?.slice(0, 100) || ''
+    }));
+
+    const prompt = `
+You are an expert news editor. Your task is to select exactly 2 or 3 most valuable, impactful, or highly discussable gaming or tech articles from the following list.
+These selected articles will be sent to a search engine to retrieve deep background context, reviews, and community reactions.
+Do NOT select simple announcements, daily deals, or repetitive updates. Select articles that have deep analysis potential, product releases, major controversies, or insightful opinions.
+
+Articles List:
+${JSON.stringify(listForPrompt)}
+
+Output the results strictly as a JSON object containing an array of selected indices:
+{
+  "indices": [index1, index2]
+}
+`;
+
+    const response = await secondaryOpenaiClient.chat.completions.create({
+      model: secondaryModelName,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      response_format: { type: 'json_object' }
+    });
+
+    const parsed = parseCleanJson(response.choices[0].message.content || '{}');
+    const selectedIndices: number[] = parsed.indices || [];
+    console.log(`[LLM Processor] High-value RSS indices selected by LLM: ${JSON.stringify(selectedIndices)}`);
+    // Filter to ensure validity
+    return selectedIndices.filter(idx => typeof idx === 'number' && idx >= 0 && idx < rssItems.length);
+  } catch (error) {
+    console.error('[LLM Processor Error] Failed to select high-value RSS items via LLM:', error);
+    // Programmatic fallback
+    return [0, 1].filter(i => i < rssItems.length);
+  }
+}
+

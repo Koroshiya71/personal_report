@@ -5,7 +5,7 @@ import { parseRssFeeds } from './parser_rss';
 import { fetchBilibiliShows } from './parser_bilibili';
 import { fetchBangumiCalendar } from './parser_bangumi';
 import { performSearch } from './search';
-import { processReport, processWeeklyReport, FinalReport } from './llm_processor';
+import { processReport, processWeeklyReport, FinalReport, selectHighValueRss } from './llm_processor';
 
 dotenv.config();
 
@@ -85,16 +85,91 @@ async function runCrawler() {
     }
 
     // 6. Execute searches for local shops
-    console.log('\n--- Step 5: Performing Search Engine Queries ---');
+    console.log('\n--- Step 5: Performing Search Engine Queries (Advanced Strategies A, B, C, D) ---');
     const tavilyKey = process.env.TAVILY_API_KEY || undefined;
 
-    // Search query: Local shops (books, coffee, bars)
-    const shopQuery = `${location.primary} 书店 咖啡店 清吧 推荐 探店`;
-    const shopSearchResults = await performSearch(shopQuery, tavilyKey);
+    // --- Strategy A: Query Specialization & Multi-Dimension Expansion ---
+    // Fine-grained shop search queries
+    const shopQueries = [
+      `${location.primary} 新开 咖啡店 精品咖啡 推荐 探店`,
+      `${location.primary} 氛围感 清吧 威士忌 推荐 探店`,
+      `${location.primary} 独立书店 艺术书店 推荐`
+    ];
+    console.log(`[Search - Strategy A] Launching ${shopQueries.length} parallel shop searches...`);
+    const shopSearchPromises = shopQueries.map(q => performSearch(q, tavilyKey));
+    const shopSearchResponses = await Promise.all(shopSearchPromises);
+    const shopSearchResults = shopSearchResponses.flat();
+    console.log(`[Search - Strategy A] Collected ${shopSearchResults.length} total shop search results.`);
 
-    // Search query for events (specifically for CPP同人展)
-    const cppQuery = `site:allcpp.cn ${location.primary} ${location.secondary} 漫展 同人展`;
-    const eventSearchResults = await performSearch(cppQuery, tavilyKey);
+    // Weekend check for Strategy D
+    const dayOfWeek = new Date().getDay(); // 0 = Sunday, 5 = Friday, 6 = Saturday
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
+
+    // Fine-grained event queries
+    const eventQueries = [
+      `site:allcpp.cn ${location.primary} 漫展 同人展`,
+      `site:allcpp.cn ${location.secondary} 漫展 同人展`,
+      `${location.primary} 艺术展 展览 戏剧 演出 时间`
+    ];
+    if (isWeekend) {
+      console.log('[Search - Strategy D] Weekend detected (Fri/Sat/Sun). Adding weekend special query.');
+      eventQueries.push(`${location.primary} 周末 去哪玩 创意市集 游园会 活动 推荐`);
+    }
+
+    console.log(`[Search - Strategy A/D] Launching ${eventQueries.length} parallel event searches...`);
+    const eventSearchPromises = eventQueries.map(q => performSearch(q, tavilyKey));
+    const eventSearchResponses = await Promise.all(eventSearchPromises);
+    const eventSearchResults = eventSearchResponses.flat();
+    console.log(`[Search - Strategy A/D] Collected ${eventSearchResults.length} total event search results.`);
+
+    // --- Strategy B: Preferences-Based Game Trend Search ---
+    try {
+      const currentYear = new Date().getFullYear();
+      const genre = preferences.games.include_genres?.[0] || 'RPG';
+      const themeOrStyle = preferences.games.themes?.[0] || preferences.games.art_styles?.[0] || '';
+      const gameTrendQuery = `${currentYear}年 ${themeOrStyle} ${genre} 游戏 评测 推荐 新游`;
+      console.log(`[Search - Strategy B] Running preference-based game trend search: "${gameTrendQuery}"`);
+      const gameTrendResults = await performSearch(gameTrendQuery, tavilyKey);
+      
+      gameTrendResults.forEach(res => {
+        rssItems.push({
+          title: res.title,
+          link: res.url,
+          pubDate: new Date().toISOString(),
+          contentSnippet: res.content,
+          source: '搜索引擎游戏热点',
+          category: 'games'
+        });
+      });
+      console.log(`[Search - Strategy B] Injected ${gameTrendResults.length} gaming trend items into RSS queue.`);
+    } catch (e) {
+      console.error('[Search - Strategy B Error] Failed to run preference-based game search:', e);
+    }
+
+    // --- Strategy C: RSS News Deepen Search via LLM Pre-screening ---
+    try {
+      const selectedIndices = await selectHighValueRss(rssItems);
+      if (selectedIndices.length > 0) {
+        console.log(`[Search - Strategy C] Selecting ${selectedIndices.length} RSS items for deepening:`);
+        
+        const deepSearchPromises = selectedIndices.map(async (idx) => {
+          const item = rssItems[idx];
+          if (!item) return;
+          console.log(`  - [Deepen Search] Selected: "${item.title}"`);
+          const cleanTitle = item.title.replace(/["']/g, '').slice(0, 40);
+          const q = `"${cleanTitle}" 评测 玩家讨论 深度分析`;
+          const results = await performSearch(q, tavilyKey);
+          if (results.length > 0) {
+            const contextText = results.map((r, rIdx) => `${rIdx + 1}. [${r.title}]: ${r.content}`).join('\n');
+            item.contentSnippet = `${item.contentSnippet || ''}\n\n【全网深度检索背景】：\n${contextText}`;
+          }
+        });
+        await Promise.all(deepSearchPromises);
+        console.log('[Search - Strategy C] Finished deepening selected RSS items.');
+      }
+    } catch (e) {
+      console.error('[Search - Strategy C Error] Failed to deepen RSS items:', e);
+    }
 
     // 7. Process Daily Report with AI
     console.log('\n--- Step 6: Processing & Summarizing Daily Report with AI ---');
