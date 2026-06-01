@@ -136,6 +136,60 @@ body {
   margin-bottom: 24px;
 }
 
+/* Collapsible sidebar month grouping */
+.month-group {
+  margin-bottom: 8px;
+}
+
+.month-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.01);
+  border: 1px solid var(--border-color);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.month-header:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.month-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.month-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.month-arrow.expanded {
+  transform: rotate(90deg);
+  color: var(--color-primary);
+}
+
+.month-date-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 8px;
+  border-left: 1px dashed rgba(255, 255, 255, 0.05);
+}
+
+.month-date-list .date-item {
+  padding: 10px 12px;
+}
+
 .date-item {
   display: flex;
   align-items: center;
@@ -325,6 +379,7 @@ body {
   font-size: 15px;
   line-height: 1.6;
   color: #e5e7eb;
+  white-space: pre-wrap;
 }
 
 /* Grid Layouts for Modules */

@@ -6,6 +6,12 @@ import { exec } from 'child_process';
 const PORT = 8080;
 const HOST = '0.0.0.0';
 
+// Global state for background tasks
+let isCrawling = false;
+let isUpdating = false;
+let lastCrawlError = null;
+let lastUpdateError = null;
+
 const mimeTypes = {
   '.html': 'text/html',
   '.css': 'text/css',
@@ -20,44 +26,79 @@ const mimeTypes = {
 
 // 1. Start a simple static server to host the compiled Vite 'dist' folder
 const server = http.createServer((req, res) => {
-  // Handle API request to manually trigger crawl
+  // Handle API request to query task status
+  if (req.url === '/api/status') {
+    res.writeHead(200, { 
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end(JSON.stringify({
+      crawling: isCrawling,
+      updating: isUpdating,
+      lastCrawlError: lastCrawlError,
+      lastUpdateError: lastUpdateError
+    }));
+    return;
+  }
+
+  // Handle API request to manually trigger crawl in the background
   if (req.url === '/api/crawl') {
     console.log(`[API] [${new Date().toLocaleString()}] Manual crawl request received.`);
     res.writeHead(200, { 
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
     });
-    
+
+    if (isCrawling) {
+      res.end(JSON.stringify({ success: false, error: '爬虫任务已在后台运行中，请勿重复提交。' }));
+      return;
+    }
+
+    isCrawling = true;
+    lastCrawlError = null;
+
     exec('npm run crawl', (error, stdout, stderr) => {
+      isCrawling = false;
       if (error) {
         console.error(`[API Error] Scraper run failed: ${error.message}`);
-        res.end(JSON.stringify({ success: false, error: error.message }));
+        lastCrawlError = error.message;
         return;
       }
       console.log(`[API Output] Manual crawl completed successfully.`);
-      res.end(JSON.stringify({ success: true }));
     });
+
+    res.end(JSON.stringify({ success: true, message: '爬虫已在后台启动。' }));
     return;
   }
 
-  // Handle API request to trigger Git update and rebuild
+  // Handle API request to trigger Git update and rebuild in the background
   if (req.url === '/api/update') {
     console.log(`[API] [${new Date().toLocaleString()}] System update request received.`);
     res.writeHead(200, { 
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*'
     });
+
+    if (isUpdating) {
+      res.end(JSON.stringify({ success: false, error: '系统更新已在后台运行中，请勿重复提交。' }));
+      return;
+    }
+
+    isUpdating = true;
+    lastUpdateError = null;
     
     // Reset local changes to tracked files first, pull latest code, install dependencies, and rebuild the React app
     exec('git reset --hard HEAD && git pull && npm install && npm run build', (error, stdout, stderr) => {
+      isUpdating = false;
       if (error) {
         console.error(`[API Error] Update failed: ${error.message}`);
-        res.end(JSON.stringify({ success: false, error: error.message }));
+        lastUpdateError = error.message;
         return;
       }
       console.log(`[API Output] Update completed successfully.`);
-      res.end(JSON.stringify({ success: true }));
     });
+
+    res.end(JSON.stringify({ success: true, message: '系统升级已在后台启动，正在编译拉取，请稍候。' }));
     return;
   }
 
@@ -103,10 +144,17 @@ server.listen(PORT, HOST, () => {
 
 // 2. Scheduler logic
 function runCrawler() {
+  if (isCrawling) {
+    console.log(`[Scheduler] [${new Date().toLocaleString()}] Crawl already running. Skipping scheduled run.`);
+    return;
+  }
   console.log(`[Scheduler] [${new Date().toLocaleString()}] Starting crawl...`);
+  isCrawling = true;
   exec('npm run crawl', (error, stdout, stderr) => {
+    isCrawling = false;
     if (error) {
       console.error(`[Scheduler Error] Scraper run failed: ${error.message}`);
+      lastCrawlError = error.message;
       return;
     }
     console.log(`[Scheduler Output] Scraper finished successfully:\n${stdout}`);

@@ -326,7 +326,17 @@ ${JSON.stringify(rssItems.map(item => ({ title: item.title, snippet: item.conten
 
 User Preferences:
 - Target Games: RPG, Action (动作), Strategy/Card (策略卡牌). Exclude Shooters (射击) and Horror (恐怖) games. Prefers Japanese anime art style (日系二次元), samurai (武士), Wuxia/Xianxia (武侠/仙侠) themes.
-- Target Tech: AI developments, productivity, geeks, open source, technGuidelines for writing "editor_comment" (CRITICAL FOR TONE):
+- Target Tech: AI developments, productivity, geeks, open source, technological breakthroughs.
+
+Your Task:
+1. Games section:
+   - Select 3 to 5 high-quality articles for "games_primary". These MUST be valuable discussions, deep analyses, product reviews, or retrospectives (DO NOT select pure press release announcements). Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
+   - Select 5 to 10 standard news announcements or quick briefs for "games_secondary" (only need title, source).
+2. Tech section:
+   - Select 3 to 5 high-quality, objective, and insightful articles for "tech_primary". FILTER OUT low-quality clickbaits, flame wars, or extreme/opinionated/hostile statements. Clarify and enrich brief or confusing details in the original summaries based on your knowledge. Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
+   - Select 5 to 10 quick tech news for "tech_secondary" (only need title, source).
+
+Guidelines for writing "editor_comment" (CRITICAL FOR TONE):
 - Write in a natural, colloquial, yet intellectually engaging tone in Chinese, like a real person sharing insights with a friend. Use a first-person or collaborative voice (e.g., "我感觉...", "从我们的视角来看...", "或许可以关注..."). Speak as a peer rather than an institutional authority or marketing copywriter.
 - AVOID AI-style fluff, jargon-filled marketing buzzwords, and robotic templates (e.g., do NOT start with or use phrases like "这表明了...", "总的来说...", "值得一提的是...", "该事件标志着...", "不得不说...", "展现了其独特的魅力").
 - Be rational, objective, and multi-dimensional. Do not offer simple, shallow praise or criticism. Instead, dissect design trade-offs, underlying motivations, technical constraints, or future implications in 1-2 concise, high-density sentences.
@@ -439,13 +449,24 @@ Output the results strictly as a JSON object:
 
     // 3. Generate Overall Daily Summary
     const summaryPrompt = `
-Based on today's compiled content, write a beautiful daily briefing summary (今日快讯) for the user.
-Keep it warm, engaging, and personalized. 
+Based on today's compiled content, write a beautiful daily briefing summary (今日快讯) for the user in Chinese.
+Keep it warm, engaging, and personalized. Speak as their companion.
+
+Instead of writing a single large paragraph of text, you MUST structure it as a clean list using Markdown bullet points, categorizing the highlights of the day. For example:
+亲爱的朋友，为你送上今天的专属快讯！☕️
+
+- 🎮 **游戏精选**：这里总结1-2个最亮眼的游戏新闻...
+- 🚀 **前沿科技**：总结1-2个科技突破亮点...
+- 📺 **今日番剧**：提到今天放送的精彩番剧...
+- ☕ **生活去处**：用温暖的语言推荐今天挑选的探店去处...
+
+愿你拥有充实、愉快而美好的一天！✨
+
 Summary of today's content:
 - Games: ${JSON.stringify(games_primary.map((g: any) => g.title))}
 - Shops: ${JSON.stringify(shops.map((s: any) => s.name))}
 - Anime: ${JSON.stringify(filteredAnime.slice(0, 2).map(a => a.title))}
-Write a short paragraph in Chinese (around 150 words).
+Write around 150-200 words.
 `;
 
     const summaryResponse = await openaiClient.chat.completions.create({
@@ -665,13 +686,22 @@ Output strict JSON:
 
     // Create a beautiful weekly summary briefing
     const summaryPrompt = `
-Generate a warm and motivating Weekly Briefing (周报前言) in Chinese (about 180 words) for the user.
+Generate a warm and motivating Weekly Briefing (周报前言) in Chinese for the user.
 Speak as their AI life companion.
+You MUST structure this briefing using clean Markdown bullet points to summarize the highlights for the week. For example:
+哈罗！这是为你整理的本周看点总结，祝你度过充实的一周：
+
+- 🎮 **本周游戏**：总结本周最精彩的游戏热点...
+- 🚀 **科技精华**：总结本周最具前瞻性的科技突破...
+- 📅 **追番与活动**：提及本周追番日历与在 ${location.primary}/${location.secondary} 准备开票的线下同人展/展览活动...
+- ☕ **周末探店**：用轻松的语气推荐本周挑选的特色店面，适合周末放松小憩...
+
 Highlight:
 - That this is their personalized Weekly Report for the week of ${currentDate}.
 - Briefly touch upon the major gaming and tech trends of the week.
 - Remind them of the new anime schedule (追番日历) and list of upcoming events/comic cons in ${location.primary}/${location.secondary} that are ready for ticketing.
 - Encourage them to check out the recommended shops (bookstore/cafe/bar) for weekend relaxation.
+Write around 180-220 words.
 `;
 
     const summaryResponse = await openaiClient.chat.completions.create({

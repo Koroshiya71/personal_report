@@ -92,6 +92,28 @@ function App() {
   const [crawling, setCrawling] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [expandedMonths, setExpandedMonths] = useState<{ [key: string]: boolean }>({});
+
+  const getMonthStr = (dateStr: string) => {
+    const parts = dateStr.split('-');
+    if (parts.length >= 2) {
+      return `${parts[0]}年${parts[1]}月`;
+    }
+    return '其它归档';
+  };
+
+  // Group dates by YYYY-MM month format
+  const getGroupedDates = (dates: string[]) => {
+    const groups: { [month: string]: string[] } = {};
+    dates.forEach((date) => {
+      const month = getMonthStr(date);
+      if (!groups[month]) {
+        groups[month] = [];
+      }
+      groups[month].push(date);
+    });
+    return groups;
+  };
 
   // Fetch report data at runtime
   const loadData = async () => {
@@ -125,23 +147,23 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          alert('日报生成成功！已自动刷新看板数据。');
-          await loadData();
+          alert('数据抓取任务已在后台启动！看板将在生成完成后自动刷新。');
         } else {
-          alert('生成失败: ' + (data.error || '未知错误'));
+          alert('启动失败: ' + (data.error || '未知错误'));
+          setCrawling(false);
         }
       } else {
         alert('接口调用失败。请确认服务运行于 Docker/NAS 环境中。如果是在本地调试，请在命令行中手动执行 npm run crawl。');
+        setCrawling(false);
       }
     } catch (e) {
-      alert('连接抓取接口失败。若是在本地开发，请使用 npm run crawl 命令行；如果在 Docker 部署中，请检查容器是否正常启动。');
-    } finally {
+      alert('连接抓取接口失败。若是在本地开发，请使用 npm run crawl 命令行。');
       setCrawling(false);
     }
   };
 
   const handleUpdate = async () => {
-    if (!window.confirm('确认要更新系统版本吗？服务将在后台从 Git 拉取最新代码，并自动重新编译。这需要几秒钟时间。')) {
+    if (!window.confirm('确认要更新系统版本吗？服务将在后台从 Git 拉取最新代码，并自动重新编译。这需要几十秒到几分钟时间。')) {
       return;
     }
     setUpdating(true);
@@ -150,17 +172,17 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          alert('系统升级成功！正在重载页面加载新版本。');
-          window.location.reload();
+          alert('系统更新已在后台启动！编译完成后页面将自动重新载入。');
         } else {
           alert('升级失败: ' + (data.error || '未知错误'));
+          setUpdating(false);
         }
       } else {
         alert('接口调用失败。请确认服务运行于 Docker/NAS 环境中。');
+        setUpdating(false);
       }
     } catch (e) {
-      alert('连接更新接口失败。请确保容器网络正常，或检查容器运行日志。');
-    } finally {
+      alert('连接更新接口失败。请确保容器网络正常。');
       setUpdating(false);
     }
   };
@@ -168,6 +190,72 @@ function App() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Poll task status in the background
+  useEffect(() => {
+    let intervalId: any;
+
+    const pollStatus = async () => {
+      try {
+        const res = await fetch('/api/status');
+        if (res.ok) {
+          const data = await res.json();
+
+          setCrawling((prevCrawling) => {
+            if (prevCrawling && !data.crawling) {
+              alert('日报生成完成！已自动刷新看板数据。');
+              loadData();
+            }
+            return data.crawling;
+          });
+
+          setUpdating((prevUpdating) => {
+            if (prevUpdating && !data.updating) {
+              alert('系统更新并编译完成！正在重新载入页面加载新版本。');
+              window.location.reload();
+            }
+            return data.updating;
+          });
+
+          if (!data.crawling && !data.updating) {
+            clearInterval(intervalId);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to poll status:', e);
+      }
+    };
+
+    // Check status immediately
+    fetch('/api/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          setCrawling(data.crawling);
+          setUpdating(data.updating);
+          if (data.crawling || data.updating) {
+            intervalId = setInterval(pollStatus, 2000);
+          }
+        }
+      })
+      .catch((e) => console.error('Initial status check failed:', e));
+
+    if (crawling || updating) {
+      intervalId = setInterval(pollStatus, 2000);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [crawling, updating]);
+
+  // Auto-expand month containing the selectedDate
+  useEffect(() => {
+    if (selectedDate) {
+      const month = getMonthStr(selectedDate);
+      setExpandedMonths((prev) => ({ ...prev, [month]: true }));
+    }
+  }, [selectedDate]);
 
   // Set default selected date once reports are loaded
   useEffect(() => {
@@ -242,18 +330,36 @@ function App() {
             </div>
           ) : (
             <div className="date-list">
-              {datesToRender.map(date => (
-                <div 
-                  key={date} 
-                  className={`date-item ${selectedDate === date ? 'active' : ''}`}
-                  onClick={() => setSelectedDate(date)}
-                >
-                  <span className="date-text">{date}</span>
-                  <span className={`badge ${activeTab === 'daily' ? 'badge-daily' : 'badge-weekly'}`}>
-                    {activeTab === 'daily' ? '日报' : '周报'}
-                  </span>
-                </div>
-              ))}
+              {Object.entries(getGroupedDates(datesToRender)).map(([monthName, dates]) => {
+                const isExpanded = !!expandedMonths[monthName];
+                return (
+                  <div key={monthName} className="month-group">
+                    <div 
+                      className="month-header" 
+                      onClick={() => setExpandedMonths(prev => ({ ...prev, [monthName]: !isExpanded }))}
+                    >
+                      <span className="month-title">{monthName}</span>
+                      <span className={`month-arrow ${isExpanded ? 'expanded' : ''}`}>▶</span>
+                    </div>
+                    {isExpanded && (
+                      <div className="month-date-list">
+                        {dates.map(date => (
+                          <div 
+                            key={date} 
+                            className={`date-item ${selectedDate === date ? 'active' : ''}`}
+                            onClick={() => setSelectedDate(date)}
+                          >
+                            <span className="date-text">{date}</span>
+                            <span className={`badge ${activeTab === 'daily' ? 'badge-daily' : 'badge-weekly'}`}>
+                              {activeTab === 'daily' ? '日报' : '周报'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
