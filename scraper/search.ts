@@ -24,7 +24,7 @@ export async function searchTavily(query: string, apiKey: string): Promise<Searc
     );
 
     if (response.data && response.data.results) {
-      return response.data.results.map((res: any) => ({
+      return response.data.results.map((res: { title?: string; url?: string; content?: string }) => ({
         title: res.title || '',
         url: res.url || '',
         content: res.content || ''

@@ -1,15 +1,25 @@
 import axios from 'axios';
 
 interface BilibiliProject {
-  id: number;
-  project_name: string;
-  venue_name: string;
-  show_time: string;
-  price_low: number;
-  sale_flag_number: number;
-  sale_flag: string;
-  cover: string;
-  city: string;
+  id?: number;
+  project_id?: number;
+  project_name?: string;
+  name?: string;
+  title?: string;
+  venue_name?: string;
+  venue?: string;
+  show_time?: string;
+  start_time?: string;
+  end_time?: string;
+  price_low?: number;
+  price?: number;
+  sale_flag_number?: number;
+  sale_flag?: string;
+  status?: string;
+  cover?: string;
+  image?: string;
+  cover_url?: string;
+  city?: string;
 }
 
 interface ActivityItem {
@@ -61,7 +71,7 @@ export async function fetchBilibiliShows(cityCodes: { [key: string]: string }): 
             console.log(`[Bilibili Debug] Item keys:`, Object.keys(list[0]));
           }
 
-          list.forEach((proj: any) => {
+          list.forEach((proj: BilibiliProject) => {
             const id = proj.id || proj.project_id || Math.random().toString(36).substring(7);
             const title = proj.project_name || proj.name || proj.title || '未命名活动';
             const venue = proj.venue_name || proj.venue || '未知地点';

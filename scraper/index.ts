@@ -5,7 +5,7 @@ import { parseRssFeeds } from './parser_rss';
 import { fetchBilibiliShows } from './parser_bilibili';
 import { fetchBangumiCalendar } from './parser_bangumi';
 import { performSearch } from './search';
-import { processReport, processWeeklyReport, FinalReport, selectHighValueRss } from './llm_processor';
+import { processReport, processWeeklyReport, FinalReport, WeeklyReport, selectHighValueRss, ActivityItem, SearchResult } from './llm_processor';
 
 dotenv.config();
 
@@ -41,7 +41,7 @@ async function runCrawler() {
     if (fs.existsSync(reportPath)) {
       try {
         existingReports = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
-      } catch (e) {
+      } catch {
         console.warn('[DB Warning] Existing reports.json was corrupt or empty. Re-initializing.');
       }
     }
@@ -55,6 +55,11 @@ async function runCrawler() {
     console.log('\n--- Step 2: Fetching Bangumi Anime Calendar ---');
     const animeCalendar = await fetchBangumiCalendar();
     console.log(`Total anime items collected: ${animeCalendar.length}`);
+    
+    // Save standalone weekly anime calendar to save space in reports and weekly databases
+    const animeCalendarPath = path.join(reportDir, 'anime_calendar.json');
+    fs.writeFileSync(animeCalendarPath, JSON.stringify(animeCalendar, null, 2), 'utf-8');
+    console.log(`Successfully wrote standalone weekly anime calendar to: ${animeCalendarPath}`);
 
     // 4. Fetch Bilibili Member Purchase shows
     console.log('\n--- Step 3: Fetching Bilibili Shows ---');
@@ -73,8 +78,8 @@ async function runCrawler() {
       const lastDate = sortedDates[sortedDates.length - 1];
       const lastReport = existingReports[lastDate];
       if (lastReport && lastReport.events) {
-        dailyFilteredEvents = bilibiliShows.filter(show => {
-          const prevShow = lastReport.events.find(e => e.id === show.id);
+        dailyFilteredEvents = bilibiliShows.filter((show: ActivityItem) => {
+          const prevShow = lastReport.events.find((e: ActivityItem) => e.id === show.id);
           if (!prevShow) return true; // Brand new show!
           return prevShow.status !== show.status; // Ticketing status changed! (e.g. from Presale to Sale)
         });
@@ -122,7 +127,8 @@ async function runCrawler() {
     const eventSearchResults = eventSearchResponses.flat();
     console.log(`[Search - Strategy A/D] Collected ${eventSearchResults.length} total event search results.`);
 
-    // --- Strategy B: Preferences-Based Game Trend Search ---
+    // --- Strategy B: Preferences-Based Game Trend Search (Disabled as per user preference) ---
+    /*
     try {
       const currentYear = new Date().getFullYear();
       const genre = preferences.games.include_genres?.[0] || 'RPG';
@@ -131,7 +137,7 @@ async function runCrawler() {
       console.log(`[Search - Strategy B] Running preference-based game trend search: "${gameTrendQuery}"`);
       const gameTrendResults = await performSearch(gameTrendQuery, tavilyKey);
       
-      gameTrendResults.forEach(res => {
+      gameTrendResults.forEach((res: SearchResult) => {
         rssItems.push({
           title: res.title,
           link: res.url,
@@ -145,6 +151,7 @@ async function runCrawler() {
     } catch (e) {
       console.error('[Search - Strategy B Error] Failed to run preference-based game search:', e);
     }
+    */
 
     // --- Strategy C: RSS News Deepen Search via LLM Pre-screening ---
     try {
@@ -152,7 +159,7 @@ async function runCrawler() {
       if (selectedIndices.length > 0) {
         console.log(`[Search - Strategy C] Selecting ${selectedIndices.length} RSS items for deepening:`);
         
-        const deepSearchPromises = selectedIndices.map(async (idx) => {
+        const deepSearchPromises = selectedIndices.map(async (idx: number) => {
           const item = rssItems[idx];
           if (!item) return;
           console.log(`  - [Deepen Search] Selected: "${item.title}"`);
@@ -160,7 +167,7 @@ async function runCrawler() {
           const q = `"${cleanTitle}" 评测 玩家讨论 深度分析`;
           const results = await performSearch(q, tavilyKey);
           if (results.length > 0) {
-            const contextText = results.map((r, rIdx) => `${rIdx + 1}. [${r.title}]: ${r.content}`).join('\n');
+            const contextText = results.map((r: SearchResult, rIdx: number) => `${rIdx + 1}. [${r.title}]: ${r.content}`).join('\n');
             item.contentSnippet = `${item.contentSnippet || ''}\n\n【全网深度检索背景】：\n${contextText}`;
           }
         });
@@ -195,11 +202,11 @@ async function runCrawler() {
 
     if (generateWeekly) {
       console.log('\n--- Step 7: Compiling Weekly Report ---');
-      let existingWeekly: { [date: string]: any } = {};
+      let existingWeekly: { [date: string]: WeeklyReport } = {};
       if (fs.existsSync(weeklyPath)) {
         try {
           existingWeekly = JSON.parse(fs.readFileSync(weeklyPath, 'utf-8'));
-        } catch (e) {
+        } catch {
           console.warn('[DB Warning] Existing weekly.json was corrupt. Re-initializing.');
         }
       }
@@ -224,6 +231,9 @@ async function runCrawler() {
         preferences,
         location
       );
+
+      // Strip the large anime_calendar from the weekly report database to save space
+      delete (weeklyReport as any).anime_calendar;
 
       existingWeekly[weeklyReport.date] = weeklyReport;
       fs.writeFileSync(weeklyPath, JSON.stringify(existingWeekly, null, 2), 'utf-8');

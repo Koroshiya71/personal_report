@@ -68,9 +68,16 @@ interface WeeklyReport {
   games_secondary: SecondaryNewsItem[];
   tech_primary: PrimaryNewsItem[];
   tech_secondary: SecondaryNewsItem[];
-  anime_calendar: AnimeItem[];
+  anime_calendar?: AnimeItem[];
   events: ActivityItem[];
   shops: ShopItem[];
+  stats?: {
+    total_articles: number;
+    games_count: number;
+    tech_count: number;
+    events_count: number;
+    fun_insight: string;
+  };
 }
 
 const weekdaysOrder = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"];
@@ -84,15 +91,25 @@ const getTodayWeekday = () => {
 const todayWeekday = getTodayWeekday();
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'daily' | 'weekly'>('daily');
+  const [activeTab, setActiveTab] = useState<'daily' | 'weekly' | 'anime'>('daily');
   const [dailyReports, setDailyReports] = useState<{ [date: string]: DailyReport }>({});
   const [weeklyReports, setWeeklyReports] = useState<{ [date: string]: WeeklyReport }>({});
+  const [animeCalendar, setAnimeCalendar] = useState<AnimeItem[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedAnimeDay, setSelectedAnimeDay] = useState<string>(todayWeekday);
   const [crawling, setCrawling] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expandedMonths, setExpandedMonths] = useState<{ [key: string]: boolean }>({});
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
 
   const getMonthStr = (dateStr: string) => {
     const parts = dateStr.split('-');
@@ -116,15 +133,19 @@ function App() {
   };
 
   // Fetch report data at runtime
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    let loadedDaily: { [date: string]: DailyReport } = {};
+    let loadedWeekly: { [date: string]: WeeklyReport } = {};
+
     try {
       const dailyRes = await fetch('/src/data/reports.json');
       if (dailyRes.ok) {
         const data = await dailyRes.json();
         setDailyReports(data);
+        loadedDaily = data;
       }
-    } catch (e) {
+    } catch {
       console.log('Daily reports not generated yet or missing.');
     }
 
@@ -133,11 +154,35 @@ function App() {
       if (weeklyRes.ok) {
         const data = await weeklyRes.json();
         setWeeklyReports(data);
+        loadedWeekly = data;
       }
-    } catch (e) {
+    } catch {
       console.log('Weekly reports not generated yet or missing.');
     }
-    setLoading(false);
+
+    try {
+      const animeRes = await fetch('/src/data/anime_calendar.json');
+      if (animeRes.ok) {
+        const data = await animeRes.json();
+        setAnimeCalendar(data);
+      }
+    } catch {
+      console.log('Anime calendar not generated yet or missing.');
+    }
+
+    // Initialize selectedDate and expandedMonths here
+    const targetReports = activeTab === 'weekly' ? loadedWeekly : loadedDaily;
+    const dates = Object.keys(targetReports).sort();
+    if (dates.length > 0) {
+      const defaultDate = dates[dates.length - 1];
+      setSelectedDate(defaultDate);
+      const month = getMonthStr(defaultDate);
+      setExpandedMonths((prev) => ({ ...prev, [month]: true }));
+    } else {
+      setSelectedDate('');
+    }
+
+    if (showLoading) setLoading(false);
   };
 
   const handleCrawl = async () => {
@@ -147,17 +192,17 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          alert('数据抓取任务已在后台启动！看板将在生成完成后自动刷新。');
+          showToast('数据抓取任务已在后台启动！看板将在生成完成后自动刷新。', 'info');
         } else {
-          alert('启动失败: ' + (data.error || '未知错误'));
+          showToast('启动失败: ' + (data.error || '未知错误'), 'error');
           setCrawling(false);
         }
       } else {
-        alert('接口调用失败。请确认服务运行于 Docker/NAS 环境中。如果是在本地调试，请在命令行中手动执行 npm run crawl。');
+        showToast('接口调用失败。请确认服务运行于 Docker/NAS 环境中。如果是在本地调试，请在命令行中手动执行 npm run crawl。', 'error');
         setCrawling(false);
       }
-    } catch (e) {
-      alert('连接抓取接口失败。若是在本地开发，请使用 npm run crawl 命令行。');
+    } catch {
+      showToast('连接抓取接口失败。若是在本地开发，请使用 npm run crawl 命令行。', 'error');
       setCrawling(false);
     }
   };
@@ -172,28 +217,31 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          alert('系统更新已在后台启动！编译完成后页面将自动重新载入。');
+          showToast('系统更新已在后台启动！编译完成后页面将自动重新载入。', 'info');
         } else {
-          alert('升级失败: ' + (data.error || '未知错误'));
+          showToast('升级失败: ' + (data.error || '未知错误'), 'error');
           setUpdating(false);
         }
       } else {
-        alert('接口调用失败。请确认服务运行于 Docker/NAS 环境中。');
+        showToast('接口调用失败。请确认服务运行于 Docker/NAS 环境中。', 'error');
         setUpdating(false);
       }
-    } catch (e) {
-      alert('连接更新接口失败。请确保容器网络正常。');
+    } catch {
+      showToast('连接更新接口失败。请确保容器网络正常。', 'error');
       setUpdating(false);
     }
   };
 
   useEffect(() => {
-    loadData();
+    // Initial load: don't show loading screen trigger since loading state starts as true by default
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadData(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Poll task status in the background
   useEffect(() => {
-    let intervalId: any;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
 
     const pollStatus = async () => {
       try {
@@ -203,26 +251,26 @@ function App() {
 
           setCrawling((prevCrawling) => {
             if (prevCrawling && !data.crawling) {
-              alert('日报生成完成！已自动刷新看板数据。');
-              loadData();
+              showToast('日报生成完成！已自动刷新看板数据。', 'success');
+              loadData(false);
             }
             return data.crawling;
           });
 
           setUpdating((prevUpdating) => {
             if (prevUpdating && !data.updating) {
-              alert('系统更新并编译完成！正在重新载入页面加载新版本。');
+              showToast('系统更新并编译完成！正在重新载入页面加载新版本。', 'success');
               window.location.reload();
             }
             return data.updating;
           });
 
           if (!data.crawling && !data.updating) {
-            clearInterval(intervalId);
+            if (intervalId) clearInterval(intervalId);
           }
         }
-      } catch (e) {
-        console.error('Failed to poll status:', e);
+      } catch (err) {
+        console.error('Failed to poll status:', err);
       }
     };
 
@@ -238,7 +286,7 @@ function App() {
           }
         }
       })
-      .catch((e) => console.error('Initial status check failed:', e));
+      .catch((err) => console.error('Initial status check failed:', err));
 
     if (crawling || updating) {
       intervalId = setInterval(pollStatus, 2000);
@@ -247,34 +295,8 @@ function App() {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crawling, updating]);
-
-  // Auto-expand month containing the selectedDate
-  useEffect(() => {
-    if (selectedDate) {
-      const month = getMonthStr(selectedDate);
-      setExpandedMonths((prev) => ({ ...prev, [month]: true }));
-    }
-  }, [selectedDate]);
-
-  // Set default selected date once reports are loaded
-  useEffect(() => {
-    if (activeTab === 'daily') {
-      const dates = Object.keys(dailyReports).sort();
-      if (dates.length > 0) {
-        setSelectedDate(dates[dates.length - 1]); // default to latest
-      } else {
-        setSelectedDate('');
-      }
-    } else {
-      const dates = Object.keys(weeklyReports).sort();
-      if (dates.length > 0) {
-        setSelectedDate(dates[dates.length - 1]); // default to latest
-      } else {
-        setSelectedDate('');
-      }
-    }
-  }, [dailyReports, weeklyReports, activeTab]);
 
   const activeDailyReport = dailyReports[selectedDate];
   const activeWeeklyReport = weeklyReports[selectedDate];
@@ -304,13 +326,26 @@ function App() {
 
   // todayWeekday is defined globally
 
-  const handleTabChange = (tab: 'daily' | 'weekly') => {
+  const handleTabChange = (tab: 'daily' | 'weekly' | 'anime') => {
     setActiveTab(tab);
+    if (tab === 'anime') {
+      return;
+    }
+    const reports = tab === 'daily' ? dailyReports : weeklyReports;
+    const dates = Object.keys(reports).sort();
+    if (dates.length > 0) {
+      const defaultDate = dates[dates.length - 1];
+      setSelectedDate(defaultDate);
+      const month = getMonthStr(defaultDate);
+      setExpandedMonths((prev) => ({ ...prev, [month]: true }));
+    } else {
+      setSelectedDate('');
+    }
   };
 
-  const datesToRender = activeTab === 'daily' 
-    ? Object.keys(dailyReports).sort().reverse() 
-    : Object.keys(weeklyReports).sort().reverse();
+  const datesToRender = activeTab === 'weekly' 
+    ? Object.keys(weeklyReports).sort().reverse() 
+    : Object.keys(dailyReports).sort().reverse();
 
   return (
     <div className="dashboard-container">
@@ -323,44 +358,94 @@ function App() {
           </div>
         </div>
         <div className="sidebar-scroll">
-          <div className="section-label">往期归档</div>
-          {datesToRender.length === 0 ? (
-            <div style={{ padding: '0 8px', color: 'var(--text-muted)', fontSize: '13px' }}>
-              暂无历史报告，请先运行抓取
+          {activeTab === 'anime' ? (
+            <div className="anime-sidebar-content">
+              <div className="section-label">放送周期日程</div>
+              <div className="anime-sidebar-days">
+                {weekdaysOrder.map(dayName => {
+                  const dayAnimeCount = getGroupedAnime(animeCalendar)[dayName]?.length || 0;
+                  const isSelected = selectedAnimeDay === dayName;
+                  const isToday = dayName === todayWeekday;
+                  return (
+                    <div 
+                      key={dayName}
+                      className={`date-item anime-day-item ${isSelected ? 'active' : ''} ${isToday ? 'is-today-sidebar' : ''}`}
+                      onClick={() => setSelectedAnimeDay(dayName)}
+                    >
+                      <span className="date-text">{dayName}</span>
+                      <span className="badge badge-anime">
+                        {dayAnimeCount} 部
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              <div className="anime-sidebar-stats-card">
+                <h4>放送数据统计</h4>
+                <div className="stats-row">
+                  <span>本周新番总数</span>
+                  <strong>{animeCalendar.length} 部</strong>
+                </div>
+                <div className="stats-row">
+                  <span>今日放送新番</span>
+                  <strong>{getGroupedAnime(animeCalendar)[todayWeekday]?.length || 0} 部</strong>
+                </div>
+                {animeCalendar.length > 0 && (
+                  <div className="stats-row">
+                    <span>平均番剧评分</span>
+                    <strong>
+                      {(
+                        animeCalendar.reduce((sum, item) => sum + (item.rating || 0), 0) /
+                        (animeCalendar.filter(item => (item.rating || 0) > 0).length || 1)
+                      ).toFixed(2)} ⭐
+                    </strong>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
-            <div className="date-list">
-              {Object.entries(getGroupedDates(datesToRender)).map(([monthName, dates]) => {
-                const isExpanded = !!expandedMonths[monthName];
-                return (
-                  <div key={monthName} className="month-group">
-                    <div 
-                      className="month-header" 
-                      onClick={() => setExpandedMonths(prev => ({ ...prev, [monthName]: !isExpanded }))}
-                    >
-                      <span className="month-title">{monthName}</span>
-                      <span className={`month-arrow ${isExpanded ? 'expanded' : ''}`}>▶</span>
-                    </div>
-                    {isExpanded && (
-                      <div className="month-date-list">
-                        {dates.map(date => (
-                          <div 
-                            key={date} 
-                            className={`date-item ${selectedDate === date ? 'active' : ''}`}
-                            onClick={() => setSelectedDate(date)}
-                          >
-                            <span className="date-text">{date}</span>
-                            <span className={`badge ${activeTab === 'daily' ? 'badge-daily' : 'badge-weekly'}`}>
-                              {activeTab === 'daily' ? '日报' : '周报'}
-                            </span>
+            <>
+              <div className="section-label">往期归档</div>
+              {datesToRender.length === 0 ? (
+                <div style={{ padding: '0 8px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                  暂无历史报告，请先运行抓取
+                </div>
+              ) : (
+                <div className="date-list">
+                  {Object.entries(getGroupedDates(datesToRender)).map(([monthName, dates]) => {
+                    const isExpanded = !!expandedMonths[monthName];
+                    return (
+                      <div key={monthName} className="month-group">
+                        <div 
+                          className="month-header" 
+                          onClick={() => setExpandedMonths(prev => ({ ...prev, [monthName]: !isExpanded }))}
+                        >
+                          <span className="month-title">{monthName}</span>
+                          <span className={`month-arrow ${isExpanded ? 'expanded' : ''}`}>▶</span>
+                        </div>
+                        {isExpanded && (
+                          <div className="month-date-list">
+                            {dates.map(date => (
+                              <div 
+                                key={date} 
+                                className={`date-item ${selectedDate === date ? 'active' : ''}`}
+                                onClick={() => setSelectedDate(date)}
+                              >
+                                <span className="date-text">{date}</span>
+                                <span className={`badge ${activeTab === 'daily' ? 'badge-daily' : 'badge-weekly'}`}>
+                                  {activeTab === 'daily' ? '日报' : '周报'}
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
         </div>
       </aside>
@@ -380,6 +465,12 @@ function App() {
               onClick={() => handleTabChange('weekly')}
             >
               每周周报
+            </button>
+            <button 
+              className={`view-btn ${activeTab === 'anime' ? 'active' : ''}`}
+              onClick={() => handleTabChange('anime')}
+            >
+              新番日历
             </button>
           </div>
           
@@ -405,7 +496,7 @@ function App() {
             >
               {updating ? '⚙️ 正在更新中...' : '🔄 检查系统更新'}
             </button>
-            <button className="refresh-btn" onClick={loadData} disabled={crawling || updating}>
+            <button className="refresh-btn" onClick={() => loadData(true)} disabled={crawling || updating}>
               🔄 刷新看板
             </button>
           </div>
@@ -626,49 +717,59 @@ function App() {
                   <p className="tldr-content">{activeWeeklyReport.summary}</p>
                 </div>
 
-                {/* Weekly Anime Calendar (Day Tab Navigator) */}
-                <section>
-                  <h2 className="section-title anime-title">📅 新周番剧放送表</h2>
-                  <div className="anime-tabs-container">
-                    <div className="anime-day-tabs">
-                      {weekdaysOrder.map(dayName => (
-                        <button
-                          key={dayName}
-                          className={`anime-day-tab-btn ${selectedAnimeDay === dayName ? 'active' : ''} ${dayName === todayWeekday ? 'is-today' : ''}`}
-                          onClick={() => setSelectedAnimeDay(dayName)}
-                        >
-                          {dayName}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="anime-tab-content-grid">
-                      {getGroupedAnime(activeWeeklyReport.anime_calendar)[selectedAnimeDay || '星期一']?.length > 0 ? (
-                        getGroupedAnime(activeWeeklyReport.anime_calendar)[selectedAnimeDay || '星期一'].map((anime, idx) => (
-                          <a key={idx} className="anime-card-detailed" href={anime.link} target="_blank" rel="noopener noreferrer">
-                            <img className="anime-cover-detailed" src={anime.cover || 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=100'} alt={anime.title} referrerPolicy="no-referrer" />
-                            <div className="anime-info-detailed">
-                              <div style={{ minWidth: 0 }}>
-                                <h5 className="anime-title-detailed" title={anime.title}>{anime.title}</h5>
-                                <p className="anime-subtitle-detailed" title={anime.originalTitle}>{anime.originalTitle}</p>
-                              </div>
-                              <div className="anime-meta-detailed">
-                                <span className="anime-time-detailed">{anime.airDate}</span>
-                                {anime.rating > 0 && (
-                                  <span className="anime-rating-detailed">⭐ {anime.rating.toFixed(1)}</span>
-                                )}
-                              </div>
-                            </div>
-                          </a>
-                        ))
-                      ) : (
-                        <div className="empty-state" style={{ gridColumn: '1 / -1', padding: '30px' }}>
-                          <span className="empty-icon">📺</span>
-                          <span>该日暂无新番放送</span>
+                {/* Weekly Stats Section (Strategy D) */}
+                {(() => {
+                  const stats = activeWeeklyReport.stats || {
+                    total_articles: (activeWeeklyReport.games_primary?.length || 0) + (activeWeeklyReport.games_secondary?.length || 0) + (activeWeeklyReport.tech_primary?.length || 0) + (activeWeeklyReport.tech_secondary?.length || 0),
+                    games_count: (activeWeeklyReport.games_primary?.length || 0) + (activeWeeklyReport.games_secondary?.length || 0),
+                    tech_count: (activeWeeklyReport.tech_primary?.length || 0) + (activeWeeklyReport.tech_secondary?.length || 0),
+                    events_count: (activeWeeklyReport.events?.length || 0),
+                    fun_insight: "本周数据趣味分析：你在二次元和三次元世界之间取得了完美的平衡！新番追更不停，线下漫展活动也时刻关注。继续保持对科技和游戏的热爱吧！"
+                  };
+                  return (
+                    <section className="weekly-stats-section">
+                      <h2 className="section-title stats-title">📊 本周数据趣味盘点</h2>
+                      <div className="stats-grid">
+                        <div className="stat-card">
+                          <span className="stat-icon">📰</span>
+                          <div className="stat-info">
+                            <span className="stat-label">阅读资讯总数</span>
+                            <span className="stat-value">{stats.total_articles} <span className="stat-unit">篇</span></span>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                </section>
+                        <div className="stat-card">
+                          <span className="stat-icon">🎮</span>
+                          <div className="stat-info">
+                            <span className="stat-label">游戏热点追踪</span>
+                            <span className="stat-value">{stats.games_count} <span className="stat-unit">篇</span></span>
+                          </div>
+                        </div>
+                        <div className="stat-card">
+                          <span className="stat-icon">🚀</span>
+                          <div className="stat-info">
+                            <span className="stat-label">前沿科技洞察</span>
+                            <span className="stat-value">{stats.tech_count} <span className="stat-unit">篇</span></span>
+                          </div>
+                        </div>
+                        <div className="stat-card">
+                          <span className="stat-icon">🎪</span>
+                          <div className="stat-info">
+                            <span className="stat-label">同城活动筛选</span>
+                            <span className="stat-value">{stats.events_count} <span className="stat-unit">场</span></span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="fun-insight-card">
+                        <div className="insight-header">
+                          <span className="insight-icon">🔮</span>
+                          <h4 className="insight-title">AI 周度趣味洞察</h4>
+                        </div>
+                        <p className="insight-content">{stats.fun_insight}</p>
+                      </div>
+                    </section>
+                  );
+                })()}
 
                 {/* Shenzhen/Guangzhou Local Shop Recommendations */}
                 <section>
@@ -865,6 +966,64 @@ function App() {
                   )}
                 </section>
               </div>
+            ) : activeTab === 'anime' ? (
+              <div className="report-wrapper">
+                <div className="tldr-card" style={{ borderLeftColor: 'var(--color-anime, #ec4899)' }}>
+                  <div className="tldr-header">
+                    <span style={{ fontSize: '18px' }}>📺</span>
+                    <h3 className="tldr-title" style={{ color: 'white' }}>全局追番日历 (Anime Calendar)</h3>
+                  </div>
+                  <p className="tldr-content">
+                    这里是本季度正在热播的动漫放送表。数据每周一自动拉取并更新。你可以点击左侧栏或下方星期标签切换查看每天的放送详情。
+                  </p>
+                </div>
+
+                <section>
+                  <div className="anime-tabs-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h2 className="section-title anime-title" style={{ margin: 0 }}>📅 {selectedAnimeDay} 放送节目单</h2>
+                  </div>
+                  
+                  <div className="anime-tabs-container">
+                    <div className="anime-day-tabs">
+                      {weekdaysOrder.map(dayName => (
+                        <button
+                          key={dayName}
+                          className={`anime-day-tab-btn ${selectedAnimeDay === dayName ? 'active' : ''} ${dayName === todayWeekday ? 'is-today' : ''}`}
+                          onClick={() => setSelectedAnimeDay(dayName)}
+                        >
+                          {dayName}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="anime-tab-content-grid" style={{ marginTop: '20px' }}>
+                      {getGroupedAnime(animeCalendar)[selectedAnimeDay || '星期一']?.length > 0 ? (
+                        getGroupedAnime(animeCalendar)[selectedAnimeDay || '星期一'].map((anime, idx) => (
+                          <a key={idx} className="anime-card-detailed" href={anime.link} target="_blank" rel="noopener noreferrer">
+                            <img className="anime-cover-detailed" src={anime.cover || 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=100'} alt={anime.title} referrerPolicy="no-referrer" />
+                            <div className="anime-info-detailed">
+                              <div style={{ minWidth: 0 }}>
+                                <h5 className="anime-title-detailed" title={anime.title}>{anime.title}</h5>
+                                <p className="anime-subtitle-detailed" title={anime.originalTitle}>{anime.originalTitle}</p>
+                              </div>
+                              <div className="anime-meta-detailed">
+                                <span className="anime-time-detailed">{anime.airDate}</span>
+                                {anime.rating > 0 && (
+                                  <span className="anime-rating-detailed">⭐ {anime.rating.toFixed(1)}</span>
+                                )}
+                              </div>
+                            </div>
+                          </a>
+                        ))
+                      ) : (
+                        <div className="empty-state" style={{ gridColumn: '1 / -1', padding: '30px' }}>
+                          <span className="empty-icon">📺</span>
+                          <span>该日暂无新番放送</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              </div>
             ) : (
               <div className="empty-state">
                 <span className="empty-icon">📁</span>
@@ -880,6 +1039,20 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* Toast Notifications */}
+      <div className="toast-container">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast toast-${toast.type}`}>
+            <span className="toast-icon">
+              {toast.type === 'success' && '✅'}
+              {toast.type === 'error' && '❌'}
+              {toast.type === 'info' && '⚡'}
+            </span>
+            <span className="toast-message">{toast.message}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

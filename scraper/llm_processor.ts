@@ -36,7 +36,7 @@ if (isSecondaryApiKeyConfigured) {
 
 
 // Interfaces
-interface RssItem {
+export interface RssItem {
   title: string;
   link: string;
   pubDate?: string;
@@ -45,7 +45,7 @@ interface RssItem {
   category: string;
 }
 
-interface ActivityItem {
+export interface ActivityItem {
   id: string;
   title: string;
   venue: string;
@@ -58,7 +58,7 @@ interface ActivityItem {
   source: string;
 }
 
-interface AnimeItem {
+export interface AnimeItem {
   id: number;
   title: string;
   originalTitle: string;
@@ -70,10 +70,32 @@ interface AnimeItem {
   summary: string;
 }
 
-interface SearchResult {
+export interface SearchResult {
   title: string;
   url: string;
   content: string;
+}
+
+export interface Preferences {
+  games: {
+    include_genres: string[];
+    exclude_genres: string[];
+    art_styles: string[];
+    themes: string[];
+  };
+  offline_activities: {
+    categories: string[];
+  };
+  shops: {
+    categories: string[];
+  };
+}
+
+export interface Location {
+  primary: string;
+  secondary: string;
+  primary_code: string;
+  secondary_code: string;
 }
 
 export interface FinalReport {
@@ -115,8 +137,54 @@ export interface FinalReport {
   }>;
 }
 
+export interface WeeklyReport {
+  date: string;
+  summary: string;
+  games_primary: Array<{
+    title: string;
+    description: string;
+    link: string;
+    source: string;
+    editor_comment: string;
+  }>;
+  games_secondary: Array<{
+    title: string;
+    link: string;
+    source: string;
+  }>;
+  tech_primary: Array<{
+    title: string;
+    description: string;
+    link: string;
+    source: string;
+    editor_comment: string;
+  }>;
+  tech_secondary: Array<{
+    title: string;
+    link: string;
+    source: string;
+  }>;
+  anime_calendar: AnimeItem[];
+  events: ActivityItem[];
+  shops: Array<{
+    name: string;
+    city: string;
+    category: string;
+    address: string;
+    description: string;
+    link?: string;
+  }>;
+  stats?: {
+    total_articles: number;
+    games_count: number;
+    tech_count: number;
+    events_count: number;
+    fun_insight: string;
+  };
+}
+
 // Fallback logic for filtering games and tech when LLM is unavailable
-function filterItemsFallback(rssItems: RssItem[], preferences: any): RssItem[] {
+function filterItemsFallback(rssItems: RssItem[], preferences: Preferences): RssItem[] {
   // Simple keyword matching for demo/fallback purposes
   const gameKeywords = [...preferences.games.include_genres, ...preferences.games.art_styles, ...preferences.games.themes, '游戏', 'RPG', '卡牌', 'ACG', '漫展', '同人'];
   const excludeKeywords = preferences.games.exclude_genres;
@@ -172,7 +240,7 @@ function isDateValidForDailyReport(timeStr: string, currentDateStr: string): boo
         }
       }
     }
-  } catch (e) {
+  } catch {
     // Fallback: keep if parsing fails to avoid false negatives
   }
   return true;
@@ -194,8 +262,8 @@ export async function processReport(
   bilibiliShows: ActivityItem[],
   shopSearchResults: SearchResult[],
   eventSearchResults: SearchResult[],
-  preferences: any,
-  location: any
+  preferences: Preferences,
+  location: Location
 ): Promise<FinalReport> {
   const currentDate = new Date().toISOString().split('T')[0];
   console.log(`[LLM Processor] Starting data synthesis for date: ${currentDate}`);
@@ -367,22 +435,22 @@ Output the results strictly as a JSON object of this structure:
 
     const parsedNews = parseCleanJson(newsResponse.choices[0].message.content || '{}');
     
-    const games_primary = (parsedNews.games_primary || []).map((g: any) => {
+    const games_primary = (parsedNews.games_primary || []).map((g: { title: string; description: string; source: string; editor_comment: string }) => {
       const match = rssItems.find(item => item.title === g.title || g.title.includes(item.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
     
-    const games_secondary = (parsedNews.games_secondary || []).map((g: any) => {
+    const games_secondary = (parsedNews.games_secondary || []).map((g: { title: string; source: string }) => {
       const match = rssItems.find(item => item.title === g.title || g.title.includes(item.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
 
-    const tech_primary = (parsedNews.tech_primary || []).map((t: any) => {
+    const tech_primary = (parsedNews.tech_primary || []).map((t: { title: string; description: string; source: string; editor_comment: string }) => {
       const match = rssItems.find(item => item.title === t.title || t.title.includes(item.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const tech_secondary = (parsedNews.tech_secondary || []).map((t: any) => {
+    const tech_secondary = (parsedNews.tech_secondary || []).map((t: { title: string; source: string }) => {
       const match = rssItems.find(item => item.title === t.title || t.title.includes(item.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
@@ -423,10 +491,10 @@ Output the results strictly as a JSON object:
     });
 
     const parsedSearch = parseCleanJson(searchResponse.choices[0].message.content || '{}');
-    const shops = parsedSearch.shops || [];
+    const shops: FinalReport['shops'] = parsedSearch.shops || [];
     
     if (parsedSearch.extra_events && Array.isArray(parsedSearch.extra_events)) {
-      parsedSearch.extra_events.forEach((evt: any, idx: number) => {
+      parsedSearch.extra_events.forEach((evt: { title: string; venue?: string; time?: string; price?: string; city?: string; link?: string; source?: string }, idx: number) => {
         // Apply programmatic filter to filter out past/future events just in case LLM misses
         if (evt.time && !isDateValidForDailyReport(evt.time, currentDate)) {
           console.log(`[LLM Processor] Filtering out extra event due to date range: "${evt.title}" (${evt.time})`);
@@ -463,8 +531,8 @@ Instead of writing a single large paragraph of text, you MUST structure it as a 
 愿你拥有充实、愉快而美好的一天！✨
 
 Summary of today's content:
-- Games: ${JSON.stringify(games_primary.map((g: any) => g.title))}
-- Shops: ${JSON.stringify(shops.map((s: any) => s.name))}
+- Games: ${JSON.stringify(games_primary.map(g => g.title))}
+- Shops: ${JSON.stringify(shops.map(s => s.name))}
 - Anime: ${JSON.stringify(filteredAnime.slice(0, 2).map(a => a.title))}
 Write around 150-200 words.
 `;
@@ -499,8 +567,8 @@ export async function processWeeklyReport(
   animeCalendar: AnimeItem[],
   bilibiliShows: ActivityItem[],
   shopSearchResults: SearchResult[],
-  preferences: any,
-  location: any
+  preferences: Preferences,
+  location: Location
 ): Promise<WeeklyReport> {
   const currentDate = new Date().toISOString().split('T')[0];
   console.log(`[LLM Processor] Generating Weekly Report for date: ${currentDate}`);
@@ -517,10 +585,10 @@ export async function processWeeklyReport(
   if (!openaiClient) {
     console.log('[LLM Processor] OpenAI API not configured. Generating weekly report in fallback mode.');
 
-    let weeklyGamesPrimary: any[] = [];
-    let weeklyGamesSecondary: any[] = [];
-    let weeklyTechPrimary: any[] = [];
-    let weeklyTechSecondary: any[] = [];
+    const weeklyGamesPrimary: FinalReport['games_primary'] = [];
+    const weeklyGamesSecondary: FinalReport['games_secondary'] = [];
+    const weeklyTechPrimary: FinalReport['tech_primary'] = [];
+    const weeklyTechSecondary: FinalReport['tech_secondary'] = [];
 
     if (dailyReports && dailyReports.length > 0) {
       dailyReports.forEach(rep => {
@@ -581,34 +649,46 @@ export async function processWeeklyReport(
       }
     ];
 
+    const finalGamesPrimary = games_primary.length > 0 ? games_primary : [
+      { title: '《仙境传说 Console Project》正式公布，重温仙境感动', description: '经典RO世界观角扮演新作公布，包含卡牌与动作元素。', link: '#', source: '机核', editor_comment: '编辑点评：经典仙境传说IP的主机化尝试，画风依然软萌，玩法值得期待。' }
+    ];
+    const finalGamesSecondary = games_secondary.length > 0 ? games_secondary : [
+      { title: '《铁拳8》游戏总监池田幸平离任万代南梦宫', link: '#', source: '游研社' }
+    ];
+    const finalTechPrimary = tech_primary.length > 0 ? tech_primary : [
+      { title: '少数派分享：「一日一偈」把经文带入轻阅读', description: '数码效率与轻型生活美学探讨，提升个人每日专注力。', link: '#', source: '少数派', editor_comment: '编辑点评：一次小而美的主观阅读生活美学实践，值得独立开发者借鉴。' }
+    ];
+    const finalTechSecondary = tech_secondary.length > 0 ? tech_secondary : [
+      { title: '极客动态：海盗湾上线二十周年，互联网去中心化反思', link: '#', source: 'Solidot' }
+    ];
+
     return {
       date: currentDate,
-      summary: `周报快讯 (本地测试模式)：本周回顾为您汇集了过去多天生成的日报精华。针对新一周，我们在 ${location.primary} 为您定制了最新的“新番追番表”，并整理了未来 30 天内可购票的同城线下活动；精选了 3 个本地精品探店去处，祝您度过充实的一周。`,
-      games_primary: games_primary.length > 0 ? games_primary : [
-        { title: '《仙境传说 Console Project》正式公布，重温仙境感动', description: '经典RO世界观角扮演新作公布，包含卡牌与动作元素。', link: '#', source: '机核', editor_comment: '编辑点评：经典仙境传说IP的主机化尝试，画风依然软萌，玩法值得期待。' }
-      ],
-      games_secondary: games_secondary.length > 0 ? games_secondary : [
-        { title: '《铁拳8》游戏总监池田幸平离任万代南梦宫', link: '#', source: '游研社' }
-      ],
-      tech_primary: tech_primary.length > 0 ? tech_primary : [
-        { title: '少数派分享：「一日一偈」把经文带入轻阅读', description: '数码效率与轻型生活美学探讨，提升个人每日专注力。', link: '#', source: '少数派', editor_comment: '编辑点评：一次小而美的主观阅读生活美学实践，值得独立开发者借鉴。' }
-      ],
-      tech_secondary: tech_secondary.length > 0 ? tech_secondary : [
-        { title: '极客动态：海盗湾上线二十周年，互联网去中心化反思', link: '#', source: 'Solidot' }
-      ],
+      summary: `周报快讯 (本地测试模式)：本周回顾为您汇集了过去多天生成的日报精华。针对新一周，我们在 ${location.primary} 为您定制了最新的“新番追番表”，并整理了未来 30 天内可购票 of 同城线下活动；精选了 3 个本地精品探店去处，祝您度过充实的一周。`,
+      games_primary: finalGamesPrimary,
+      games_secondary: finalGamesSecondary,
+      tech_primary: finalTechPrimary,
+      tech_secondary: finalTechSecondary,
       anime_calendar: animeCalendar,
       events: filteredEvents,
-      shops: shops
+      shops: shops,
+      stats: {
+        total_articles: finalGamesPrimary.length + finalGamesSecondary.length + finalTechPrimary.length + finalTechSecondary.length,
+        games_count: finalGamesPrimary.length + finalGamesSecondary.length,
+        tech_count: finalTechPrimary.length + finalTechSecondary.length,
+        events_count: filteredEvents.length,
+        fun_insight: "本周（本地测试模式）您的二次元与技术世界一如既往地充实！有经典IP的主机化探索，也有去中心化互联网的深思。继续保持热爱！"
+      }
     };
   }
 
   try {
     console.log('[LLM Processor] Generating Weekly Report via OpenAI...');
 
-    let allGamesPrimary: any[] = [];
-    let allGamesSecondary: any[] = [];
-    let allTechPrimary: any[] = [];
-    let allTechSecondary: any[] = [];
+    const allGamesPrimary: FinalReport['games_primary'] = [];
+    const allGamesSecondary: FinalReport['games_secondary'] = [];
+    const allTechPrimary: FinalReport['tech_primary'] = [];
+    const allTechSecondary: FinalReport['tech_secondary'] = [];
 
     if (dailyReports && dailyReports.length > 0) {
       dailyReports.forEach(rep => {
@@ -634,6 +714,7 @@ Task:
 3. Select top 3-5 tech for "best_tech_primary" (insightful, filter clickbait). Write a synthesized detailed description and a 1-2 sentence thoughtful commentary ("editor_comment").
 4. Select top 5-10 tech for "best_tech_secondary" (briefs).
 5. Recommend 3 lifestyle shops in ${location.primary}/${location.secondary}.
+6. Generate a witty, humorous, or warm 60-80 character weekly insight summary in Chinese for "stats" -> "fun_insight" analyzing the user's weekly ACG/Tech interests or activities. Do not mention robotic filler phrases.
 
 Guidelines for writing "editor_comment" (CRITICAL FOR TONE):
 - Write in a natural, colloquial, yet intellectually engaging tone in Chinese, like a real person sharing insights with a friend. Use a first-person or collaborative voice (e.g., "我感觉...", "从我们的视角来看...", "或许可以关注..."). Speak as a peer rather than an institutional authority or marketing copywriter.
@@ -646,7 +727,10 @@ Output strict JSON:
   "best_games_secondary": [{ "title": "Title", "source": "Source" }],
   "best_tech_primary": [{ "title": "Title", "description": "Summary", "source": "Source", "editor_comment": "Comment" }],
   "best_tech_secondary": [{ "title": "Title", "source": "Source" }],
-  "shops": [{ "name": "Name", "city": "${location.primary}", "category": "Category", "address": "Address", "description": "Desc" }]
+  "shops": [{ "name": "Name", "city": "${location.primary}", "category": "Category", "address": "Address", "description": "Desc" }],
+  "stats": {
+    "fun_insight": "Witty and engaging insight in Chinese about this week's trends or user profile (60-80 chars)."
+  }
 }
 `;
 
@@ -662,27 +746,35 @@ Output strict JSON:
     const allOriginalGames = [...allGamesPrimary, ...allGamesSecondary];
     const allOriginalTech = [...allTechPrimary, ...allTechSecondary];
 
-    const games_primary = (parsedWeekly.best_games_primary || []).map((g: any) => {
+    const games_primary = (parsedWeekly.best_games_primary || []).map((g: { title: string; description: string; source: string; editor_comment: string }) => {
       const match = allOriginalGames.find(orig => orig.title === g.title || g.title.includes(orig.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
     
-    const games_secondary = (parsedWeekly.best_games_secondary || []).map((g: any) => {
+    const games_secondary = (parsedWeekly.best_games_secondary || []).map((g: { title: string; source: string }) => {
       const match = allOriginalGames.find(orig => orig.title === g.title || g.title.includes(orig.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
 
-    const tech_primary = (parsedWeekly.best_tech_primary || []).map((t: any) => {
+    const tech_primary = (parsedWeekly.best_tech_primary || []).map((t: { title: string; description: string; source: string; editor_comment: string }) => {
       const match = allOriginalTech.find(orig => orig.title === t.title || t.title.includes(orig.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const tech_secondary = (parsedWeekly.best_tech_secondary || []).map((t: any) => {
+    const tech_secondary = (parsedWeekly.best_tech_secondary || []).map((t: { title: string; source: string }) => {
       const match = allOriginalTech.find(orig => orig.title === t.title || t.title.includes(orig.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
     const shops = parsedWeekly.shops || [];
+
+    const stats = {
+      total_articles: games_primary.length + games_secondary.length + tech_primary.length + tech_secondary.length,
+      games_count: games_primary.length + games_secondary.length,
+      tech_count: tech_primary.length + tech_secondary.length,
+      events_count: filteredEvents.length,
+      fun_insight: parsedWeekly.stats?.fun_insight || "本周你在数字世界和现实生活中都非常充实哦！"
+    };
 
     // Create a beautiful weekly summary briefing
     const summaryPrompt = `
@@ -693,13 +785,13 @@ You MUST structure this briefing using clean Markdown bullet points to summarize
 
 - 🎮 **本周游戏**：总结本周最精彩的游戏热点...
 - 🚀 **科技精华**：总结本周最具前瞻性的科技突破...
-- 📅 **追番与活动**：提及本周追番日历与在 ${location.primary}/${location.secondary} 准备开票的线下同人展/展览活动...
+- 📅 **追番与活动**：提及本周在 ${location.primary}/${location.secondary} 准备开票的线下同人展/展览活动以及周度番剧放送日程...
 - ☕ **周末探店**：用轻松的语气推荐本周挑选的特色店面，适合周末放松小憩...
 
 Highlight:
 - That this is their personalized Weekly Report for the week of ${currentDate}.
 - Briefly touch upon the major gaming and tech trends of the week.
-- Remind them of the new anime schedule (追番日历) and list of upcoming events/comic cons in ${location.primary}/${location.secondary} that are ready for ticketing.
+- Remind them to check the dedicated "新番日历" page and upcoming events list in ${location.primary}/${location.secondary} for ticketing details.
 - Encourage them to check out the recommended shops (bookstore/cafe/bar) for weekend relaxation.
 Write around 180-220 words.
 `;
@@ -721,7 +813,8 @@ Write around 180-220 words.
       tech_secondary,
       anime_calendar: animeCalendar,
       events: filteredEvents,
-      shops: shops
+      shops: shops,
+      stats
     };
 
   } catch (err) {
