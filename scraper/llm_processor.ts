@@ -287,11 +287,16 @@ User Preferences:
 
 Your Task:
 1. Games section:
-   - Select 3 to 5 high-quality articles for "games_primary". These MUST be valuable discussions, deep analyses, product reviews, or retrospectives (DO NOT select pure press release announcements like "trailer will release next week", "game announced without details"). Write a detailed summary in Chinese and a 1-2 sentence professional commentary ("editor_comment") analyzing its design, context, or industry impact.
+   - Select 3 to 5 high-quality articles for "games_primary". These MUST be valuable discussions, deep analyses, product reviews, or retrospectives (DO NOT select pure press release announcements). Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
    - Select 5 to 10 standard news announcements or quick briefs for "games_secondary" (only need title, source).
 2. Tech section:
-   - Select 3 to 5 high-quality, objective, and insightful articles for "tech_primary". FILTER OUT low-quality clickbaits, flame wars, or extreme/opinionated/hostile statements (especially from sites like Solidot). Clarify and enrich brief or confusing details in the original summaries based on your knowledge. Write a detailed summary in Chinese and a 1-2 sentence professional commentary ("editor_comment").
+   - Select 3 to 5 high-quality, objective, and insightful articles for "tech_primary". FILTER OUT low-quality clickbaits, flame wars, or extreme/opinionated/hostile statements. Clarify and enrich brief or confusing details in the original summaries based on your knowledge. Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
    - Select 5 to 10 quick tech news for "tech_secondary" (only need title, source).
+
+Guidelines for writing "editor_comment" (CRITICAL FOR TONE):
+- Write in a natural, colloquial, yet intellectually engaging tone in Chinese, like a real person sharing insights with a friend. Use a first-person or collaborative voice (e.g., "我感觉...", "从我们的视角来看...", "或许可以关注..."). Speak as a peer rather than an institutional authority or marketing copywriter.
+- AVOID AI-style fluff, jargon-filled marketing buzzwords, and robotic templates (e.g., do NOT start with or use phrases like "这表明了...", "总的来说...", "值得一提的是...", "该事件标志着...", "不得不说...", "展现了其独特的魅力").
+- Be rational, objective, and multi-dimensional. Do not offer simple, shallow praise or criticism. Instead, dissect design trade-offs, underlying motivations, technical constraints, or future implications in 1-2 concise, high-density sentences.
 
 Output the results strictly as a JSON object of this structure:
 {
@@ -545,18 +550,24 @@ export async function processWeeklyReport(
 
     const compilePrompt = `
 You are a senior lifestyle and technology editor. 
-Games Primary (curated deep reports): ${JSON.stringify(allGamesPrimary.map(g => ({ title: g.title, source: g.source })))}
+Here are the daily primary articles curated throughout the week (including their daily summaries and daily commentaries):
+Games Primary: ${JSON.stringify(allGamesPrimary.map(g => ({ title: g.title, source: g.source, description: g.description, editor_comment: g.editor_comment })))}
 Games Secondary: ${JSON.stringify(allGamesSecondary.map(g => ({ title: g.title, source: g.source })))}
-Tech Primary: ${JSON.stringify(allTechPrimary.map(t => ({ title: t.title, source: t.source })))}
+Tech Primary: ${JSON.stringify(allTechPrimary.map(t => ({ title: t.title, source: t.source, description: t.description, editor_comment: t.editor_comment })))}
 Tech Secondary: ${JSON.stringify(allTechSecondary.map(t => ({ title: t.title, source: t.source })))}
 Shop search results: ${JSON.stringify(shopSearchResults)}
 
 Task:
-1. Select top 3-5 games for "best_games_primary" (deep reports).
+1. Select top 3-5 games for "best_games_primary" (deep reports). Write a synthesized detailed description and a 1-2 sentence thoughtful commentary ("editor_comment").
 2. Select top 5-10 games for "best_games_secondary" (briefs).
-3. Select top 3-5 tech for "best_tech_primary" (insightful, filter clickbait).
+3. Select top 3-5 tech for "best_tech_primary" (insightful, filter clickbait). Write a synthesized detailed description and a 1-2 sentence thoughtful commentary ("editor_comment").
 4. Select top 5-10 tech for "best_tech_secondary" (briefs).
 5. Recommend 3 lifestyle shops in ${location.primary}/${location.secondary}.
+
+Guidelines for writing "editor_comment" (CRITICAL FOR TONE):
+- Write in a natural, colloquial, yet intellectually engaging tone in Chinese, like a real person sharing insights with a friend. Use a first-person or collaborative voice (e.g., "我感觉...", "从我们的视角来看...", "或许可以关注..."). Speak as a peer rather than an institutional authority or marketing copywriter.
+- AVOID AI-style fluff, jargon-filled marketing buzzwords, and robotic templates (e.g., do NOT start with or use phrases like "这表明了...", "总的来说...", "值得一提的是...", "该事件标志着...", "不得不说...", "展现了其独特的魅力").
+- Be rational, objective, and multi-dimensional. Do not offer simple, shallow praise or criticism. Instead, dissect design trade-offs, underlying motivations, technical constraints, or future implications in 1-2 concise, high-density sentences. You may adapt or refine the daily commentaries provided in the input.
 
 Output strict JSON:
 {
