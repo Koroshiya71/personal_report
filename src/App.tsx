@@ -101,6 +101,8 @@ function App() {
   const [updating, setUpdating] = useState(false);
   const wasCrawling = useRef(false);
   const wasUpdating = useRef(false);
+  const crawlStartTimeout = useRef(0);
+  const updateStartTimeout = useRef(0);
   const [loading, setLoading] = useState(true);
   const [expandedMonths, setExpandedMonths] = useState<{ [key: string]: boolean }>({});
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
@@ -258,21 +260,57 @@ function App() {
 
           if (data.crawling) {
             wasCrawling.current = true;
-          } else if (wasCrawling.current) {
-            showToast('日报生成完成！已自动刷新看板数据。', 'success');
-            loadData(false);
-            wasCrawling.current = false;
+            crawlStartTimeout.current = 0;
+            setCrawling(true);
+          } else {
+            if (wasCrawling.current) {
+              showToast('日报生成完成！已自动刷新看板数据。', 'success');
+              loadData(false);
+              wasCrawling.current = false;
+              setCrawling(false);
+              crawlStartTimeout.current = 0;
+            } else {
+              setCrawling((prev) => {
+                if (prev) {
+                  crawlStartTimeout.current += 1;
+                  if (crawlStartTimeout.current > 6) { // 12 seconds with 2s poll
+                    showToast('抓取任务启动超时，请检查服务端日志。', 'error');
+                    crawlStartTimeout.current = 0;
+                    return false;
+                  }
+                  return true;
+                }
+                return false;
+              });
+            }
           }
-          setCrawling(data.crawling);
 
           if (data.updating) {
             wasUpdating.current = true;
-          } else if (wasUpdating.current) {
-            showToast('系统更新并编译完成！正在重新载入页面加载新版本。', 'success');
-            wasUpdating.current = false;
-            window.location.reload();
+            updateStartTimeout.current = 0;
+            setUpdating(true);
+          } else {
+            if (wasUpdating.current) {
+              showToast('系统更新并编译完成！正在重新载入页面加载新版本。', 'success');
+              wasUpdating.current = false;
+              setUpdating(false);
+              updateStartTimeout.current = 0;
+              window.location.reload();
+            } else {
+              setUpdating((prev) => {
+                if (prev) {
+                  updateStartTimeout.current += 1;
+                  if (updateStartTimeout.current > 6) { // 12 seconds with 2s poll
+                    showToast('更新任务启动超时，请检查服务端日志。', 'error');
+                    updateStartTimeout.current = 0;
+                    return false;
+                  }
+                  return true;
+                }
+                return false;
+              });
+            }
           }
-          setUpdating(data.updating);
 
           if (!data.crawling && !data.updating) {
             if (intervalId) {
