@@ -298,6 +298,44 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crawling, updating]);
 
+  const renderMarkdown = (text: string) => {
+    if (!text) return null;
+    const lines = text.split('\n');
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {lines.map((line, idx) => {
+          if (!line.trim()) return <div key={idx} style={{ height: '8px' }} />;
+          
+          const parseBold = (content: string) => {
+            const parts = content.split('**');
+            return parts.map((part, pIdx) => {
+              if (pIdx % 2 === 1) {
+                return <strong key={pIdx} style={{ color: 'white', fontWeight: '600' }}>{part}</strong>;
+              }
+              return part;
+            });
+          };
+
+          const listMatch = line.match(/^[-*]\s*(.*)$/);
+          if (listMatch) {
+            return (
+              <div key={idx} className="tldr-list-item" style={{ display: 'flex', gap: '8px', paddingLeft: '8px', lineHeight: '1.6' }}>
+                <span style={{ color: 'var(--color-primary, #6366f1)', marginRight: '4px' }}>•</span>
+                <span style={{ color: 'var(--text-secondary)' }}>{parseBold(listMatch[1])}</span>
+              </div>
+            );
+          }
+
+          return (
+            <p key={idx} style={{ margin: '4px 0', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
+              {parseBold(line)}
+            </p>
+          );
+        })}
+      </div>
+    );
+  };
+
   const activeDailyReport = dailyReports[selectedDate];
   const activeWeeklyReport = weeklyReports[selectedDate];
 
@@ -517,7 +555,7 @@ function App() {
                     <span style={{ fontSize: '18px' }}>💡</span>
                     <h3 className="tldr-title">TL;DR 今日总结</h3>
                   </div>
-                  <p className="tldr-content">{activeDailyReport.summary}</p>
+                  <div className="tldr-content">{renderMarkdown(activeDailyReport.summary)}</div>
                 </div>
 
                 {/* Games Section */}
@@ -580,33 +618,7 @@ function App() {
                   )}
                 </section>
 
-                {/* ACG/Anime Section (airing today) */}
-                <section>
-                  <h2 className="section-title anime-title">📺 今日番剧广播</h2>
-                  {activeDailyReport.anime && activeDailyReport.anime.length > 0 ? (
-                    <div className="event-list" style={{ gap: '10px' }}>
-                      {activeDailyReport.anime.map((anime, i) => (
-                        <a key={i} className="anime-daily-row" href={anime.link} target="_blank" rel="noopener noreferrer">
-                          <img className="anime-daily-img" src={anime.cover || 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=100'} alt={anime.title} referrerPolicy="no-referrer" />
-                          <div className="anime-daily-info">
-                            <h4 className="anime-daily-title">{anime.title}</h4>
-                            <div className="anime-daily-sub">
-                              {anime.originalTitle} • {anime.airDate}
-                            </div>
-                          </div>
-                          {anime.rating > 0 && (
-                            <div className="anime-daily-rating">⭐ {anime.rating.toFixed(1)}</div>
-                          )}
-                        </a>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="empty-state">
-                      <span className="empty-icon">📺</span>
-                      <span>今日没有新番放送</span>
-                    </div>
-                  )}
-                </section>
+
 
                 {/* Offline Activities Section (Changes only) */}
                 <section>
@@ -705,6 +717,34 @@ function App() {
                     </div>
                   )}
                 </section>
+
+                {/* ACG/Anime Section (airing today) */}
+                <section>
+                  <h2 className="section-title anime-title">📺 今日番剧广播</h2>
+                  {activeDailyReport.anime && activeDailyReport.anime.length > 0 ? (
+                    <div className="event-list" style={{ gap: '10px' }}>
+                      {activeDailyReport.anime.map((anime, i) => (
+                        <a key={i} className="anime-daily-row" href={anime.link} target="_blank" rel="noopener noreferrer">
+                          <img className="anime-daily-img" src={anime.cover || 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=100'} alt={anime.title} referrerPolicy="no-referrer" />
+                          <div className="anime-daily-info">
+                            <h4 className="anime-daily-title">{anime.title}</h4>
+                            <div className="anime-daily-sub">
+                              {anime.originalTitle} • {anime.airDate}
+                            </div>
+                          </div>
+                          {anime.rating > 0 && (
+                            <div className="anime-daily-rating">⭐ {anime.rating.toFixed(1)}</div>
+                          )}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <span className="empty-icon">📺</span>
+                      <span>今日没有新番放送</span>
+                    </div>
+                  )}
+                </section>
               </div>
             ) : activeTab === 'weekly' && activeWeeklyReport ? (
               <div className="report-wrapper">
@@ -714,7 +754,7 @@ function App() {
                     <span style={{ fontSize: '18px' }}>📅</span>
                     <h3 className="tldr-title" style={{ color: 'white' }}>本周周报前言 (Weekly Synthesis)</h3>
                   </div>
-                  <p className="tldr-content">{activeWeeklyReport.summary}</p>
+                  <div className="tldr-content">{renderMarkdown(activeWeeklyReport.summary)}</div>
                 </div>
 
                 {/* Weekly Stats Section (Strategy D) */}

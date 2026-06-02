@@ -5,7 +5,7 @@ import { parseRssFeeds } from './parser_rss';
 import { fetchBilibiliShows } from './parser_bilibili';
 import { fetchBangumiCalendar } from './parser_bangumi';
 import { performSearch } from './search';
-import { processReport, processWeeklyReport, FinalReport, WeeklyReport, selectHighValueRss, ActivityItem, SearchResult } from './llm_processor';
+import { processReport, processWeeklyReport, FinalReport, WeeklyReport, selectHighValueRss, ActivityItem, SearchResult, getShanghaiWeekday } from './llm_processor';
 
 dotenv.config();
 
@@ -46,20 +46,53 @@ async function runCrawler() {
       }
     }
 
+    // Extract seen links and titles to avoid duplicates in daily reports
+    const seenLinks = new Set<string>();
+    const seenTitles = new Set<string>();
+    Object.values(existingReports).forEach((report) => {
+      const addSeen = (item: { title: string; link?: string }) => {
+        if (item) {
+          seenTitles.add(item.title.trim());
+          if (item.link) seenLinks.add(item.link.trim());
+        }
+      };
+      if (report.games_primary) report.games_primary.forEach(addSeen);
+      if (report.games_secondary) report.games_secondary.forEach(addSeen);
+      if (report.tech_primary) report.tech_primary.forEach(addSeen);
+      if (report.tech_secondary) report.tech_secondary.forEach(addSeen);
+    });
+
     // 2. Fetch RSS feeds
     console.log('\n--- Step 1: Fetching RSS feeds ---');
-    const rssItems = await parseRssFeeds(sources.rss);
-    console.log(`Total RSS items collected: ${rssItems.length}`);
+    const rawRssItems = await parseRssFeeds(sources.rss);
+    const rssItems = rawRssItems.filter(item => {
+      const cleanLink = item.link ? item.link.trim() : '';
+      const cleanTitle = item.title ? item.title.trim() : '';
+      return !seenLinks.has(cleanLink) && !seenTitles.has(cleanTitle);
+    });
+    console.log(`Total RSS items collected: ${rawRssItems.length}, filtered down to ${rssItems.length} new items.`);
 
     // 3. Fetch Bangumi weekly calendar
     console.log('\n--- Step 2: Fetching Bangumi Anime Calendar ---');
-    const animeCalendar = await fetchBangumiCalendar();
+    let animeCalendar = await fetchBangumiCalendar();
     console.log(`Total anime items collected: ${animeCalendar.length}`);
     
     // Save standalone weekly anime calendar to save space in reports and weekly databases
     const animeCalendarPath = path.join(reportDir, 'anime_calendar.json');
-    fs.writeFileSync(animeCalendarPath, JSON.stringify(animeCalendar, null, 2), 'utf-8');
-    console.log(`Successfully wrote standalone weekly anime calendar to: ${animeCalendarPath}`);
+    if (animeCalendar && animeCalendar.length > 0) {
+      fs.writeFileSync(animeCalendarPath, JSON.stringify(animeCalendar, null, 2), 'utf-8');
+      console.log(`Successfully wrote standalone weekly anime calendar to: ${animeCalendarPath}`);
+    } else {
+      console.warn('[Warning] Bangumi calendar was empty or failed to fetch. Loading from existing cache.');
+      if (fs.existsSync(animeCalendarPath)) {
+        try {
+          animeCalendar = JSON.parse(fs.readFileSync(animeCalendarPath, 'utf-8'));
+          console.log(`Successfully loaded ${animeCalendar.length} items from existing cache.`);
+        } catch {
+          console.error('[Error] Existing anime_calendar.json was corrupt.');
+        }
+      }
+    }
 
     // 4. Fetch Bilibili Member Purchase shows
     console.log('\n--- Step 3: Fetching Bilibili Shows ---');
@@ -107,7 +140,12 @@ async function runCrawler() {
     console.log(`[Search - Strategy A] Collected ${shopSearchResults.length} total shop search results.`);
 
     // Weekend check for Strategy D
-    const dayOfWeek = new Date().getDay(); // 0 = Sunday, 5 = Friday, 6 = Saturday
+    const getShanghaiWeekdayIndex = (date = new Date()) => {
+      const weekdayStr = getShanghaiWeekday(date);
+      const mapping = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+      return mapping.indexOf(weekdayStr);
+    };
+    const dayOfWeek = getShanghaiWeekdayIndex(); // 0 = Sunday, 5 = Friday, 6 = Saturday
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
 
     // Fine-grained event queries
@@ -197,7 +235,7 @@ async function runCrawler() {
 
     // 8. Weekly report compilation logic
     const isWeeklyForced = process.argv.includes('--weekly');
-    const isMonday = new Date().getDay() === 1;
+    const isMonday = getShanghaiWeekdayIndex() === 1;
     const generateWeekly = isWeeklyForced || isMonday;
 
     if (generateWeekly) {

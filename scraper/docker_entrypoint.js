@@ -164,9 +164,10 @@ function runCrawler() {
   });
 }
 
-// Run immediately on container startup to ensure fresh data
-console.log('[Scheduler] Initializing startup crawl...');
-runCrawler();
+// Run after a short delay on container startup to ensure network initialization
+console.log('[Scheduler] Initializing startup crawl in 10 seconds...');
+setTimeout(runCrawler, 10000);
+
 
 // Set up daily schedule loop at 9:00 AM local time
 function scheduleNextCrawl() {

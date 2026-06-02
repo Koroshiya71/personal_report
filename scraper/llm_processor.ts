@@ -256,6 +256,28 @@ function parseCleanJson(text: string) {
   }
 }
 
+export function getShanghaiDateString(date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find(p => p.type === 'year')!.value;
+  const month = parts.find(p => p.type === 'month')!.value;
+  const day = parts.find(p => p.type === 'day')!.value;
+  return `${year}-${month}-${day}`;
+}
+
+export function getShanghaiWeekday(date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    weekday: 'long'
+  });
+  return formatter.format(date);
+}
+
 export async function processReport(
   rssItems: RssItem[],
   animeCalendar: AnimeItem[],
@@ -265,16 +287,11 @@ export async function processReport(
   preferences: Preferences,
   location: Location
 ): Promise<FinalReport> {
-  const currentDate = new Date().toISOString().split('T')[0];
+  const currentDate = getShanghaiDateString();
   console.log(`[LLM Processor] Starting data synthesis for date: ${currentDate}`);
 
   // 1. Daily Report: Filter anime airing TODAY based on current weekday
-  const getWeekdayCn = () => {
-    const day = new Date().getDay();
-    const mapping = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
-    return mapping[day];
-  };
-  const todayWeekday = getWeekdayCn();
+  const todayWeekday = getShanghaiWeekday();
   const filteredAnime = animeCalendar.filter(item => item.weekday === todayWeekday);
   console.log(`[LLM Processor] Filtered ${filteredAnime.length} airing anime items for today (${todayWeekday})`);
 
@@ -570,7 +587,7 @@ export async function processWeeklyReport(
   preferences: Preferences,
   location: Location
 ): Promise<WeeklyReport> {
-  const currentDate = new Date().toISOString().split('T')[0];
+  const currentDate = getShanghaiDateString();
   console.log(`[LLM Processor] Generating Weekly Report for date: ${currentDate}`);
 
   const userEventCategories = preferences.offline_activities.categories;
