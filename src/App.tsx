@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 interface AnimeItem {
@@ -99,6 +99,8 @@ function App() {
   const [selectedAnimeDay, setSelectedAnimeDay] = useState<string>(todayWeekday);
   const [crawling, setCrawling] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const wasCrawling = useRef(false);
+  const wasUpdating = useRef(false);
   const [loading, setLoading] = useState(true);
   const [expandedMonths, setExpandedMonths] = useState<{ [key: string]: boolean }>({});
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
@@ -217,7 +219,12 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          showToast('系统更新已在后台启动！编译完成后页面将自动重新载入。', 'info');
+          if (data.upToDate) {
+            showToast('当前已是最新版本，无需更新！', 'success');
+            setUpdating(false);
+          } else {
+            showToast('检测到新版本，更新已在后台启动！编译完成后页面将自动重新载入。', 'info');
+          }
         } else {
           showToast('升级失败: ' + (data.error || '未知错误'), 'error');
           setUpdating(false);
@@ -249,24 +256,29 @@ function App() {
         if (res.ok) {
           const data = await res.json();
 
-          setCrawling((prevCrawling) => {
-            if (prevCrawling && !data.crawling) {
-              showToast('日报生成完成！已自动刷新看板数据。', 'success');
-              loadData(false);
-            }
-            return data.crawling;
-          });
+          if (data.crawling) {
+            wasCrawling.current = true;
+          } else if (wasCrawling.current) {
+            showToast('日报生成完成！已自动刷新看板数据。', 'success');
+            loadData(false);
+            wasCrawling.current = false;
+          }
+          setCrawling(data.crawling);
 
-          setUpdating((prevUpdating) => {
-            if (prevUpdating && !data.updating) {
-              showToast('系统更新并编译完成！正在重新载入页面加载新版本。', 'success');
-              window.location.reload();
-            }
-            return data.updating;
-          });
+          if (data.updating) {
+            wasUpdating.current = true;
+          } else if (wasUpdating.current) {
+            showToast('系统更新并编译完成！正在重新载入页面加载新版本。', 'success');
+            wasUpdating.current = false;
+            window.location.reload();
+          }
+          setUpdating(data.updating);
 
           if (!data.crawling && !data.updating) {
-            if (intervalId) clearInterval(intervalId);
+            if (intervalId) {
+              clearInterval(intervalId);
+              intervalId = undefined;
+            }
           }
         }
       } catch (err) {
@@ -274,23 +286,22 @@ function App() {
       }
     };
 
-    // Check status immediately
+    if (crawling || updating) {
+      intervalId = setInterval(pollStatus, 2000);
+    }
+
+    // Check status immediately on mount or dependency change
     fetch('/api/status')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
+          if (data.crawling) wasCrawling.current = true;
+          if (data.updating) wasUpdating.current = true;
           setCrawling(data.crawling);
           setUpdating(data.updating);
-          if (data.crawling || data.updating) {
-            intervalId = setInterval(pollStatus, 2000);
-          }
         }
       })
       .catch((err) => console.error('Initial status check failed:', err));
-
-    if (crawling || updating) {
-      intervalId = setInterval(pollStatus, 2000);
-    }
 
     return () => {
       if (intervalId) clearInterval(intervalId);

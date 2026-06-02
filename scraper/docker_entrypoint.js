@@ -74,31 +74,55 @@ const server = http.createServer((req, res) => {
   // Handle API request to trigger Git update and rebuild in the background
   if (req.url === '/api/update') {
     console.log(`[API] [${new Date().toLocaleString()}] System update request received.`);
-    res.writeHead(200, { 
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
-    });
-
+    
     if (isUpdating) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ success: false, error: '系统更新已在后台运行中，请勿重复提交。' }));
       return;
     }
 
-    isUpdating = true;
-    lastUpdateError = null;
-    
-    // Reset local changes to tracked files first, pull latest code, install dependencies, and rebuild the React app
-    exec('git reset --hard HEAD && git pull && npm install && npm run build', (error, stdout, stderr) => {
-      isUpdating = false;
-      if (error) {
-        console.error(`[API Error] Update failed: ${error.message}`);
-        lastUpdateError = error.message;
+    const runForcedUpdate = (httpRes) => {
+      isUpdating = true;
+      lastUpdateError = null;
+      httpRes.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      httpRes.end(JSON.stringify({ success: true, upToDate: false, message: '检测到新版本，系统已在后台启动更新并重新编译。' }));
+
+      // Reset local changes to tracked files first, pull latest code, install dependencies, and rebuild the React app
+      exec('git reset --hard HEAD && git pull && npm install && npm run build', (error, stdout, stderr) => {
+        isUpdating = false;
+        if (error) {
+          console.error(`[API Error] Update failed: ${error.message}`);
+          lastUpdateError = error.message;
+          return;
+        }
+        console.log(`[API Output] Update completed successfully.`);
+      });
+    };
+
+    // Pre-check if local branch is already up to date with remote origin main
+    exec('git fetch origin main && git rev-parse HEAD && git rev-parse origin/main', (err, stdout, stderr) => {
+      if (err) {
+        console.warn(`[API Update Warn] Pre-check failed: ${err.message}. Proceeding with forced update...`);
+        runForcedUpdate(res);
         return;
       }
-      console.log(`[API Output] Update completed successfully.`);
+      
+      const lines = stdout.trim().split('\n').map(l => l.trim()).filter(l => l.length === 40);
+      if (lines.length >= 2) {
+        const localHash = lines[lines.length - 2];
+        const remoteHash = lines[lines.length - 1];
+        console.log(`[API Update] Local version: ${localHash}, Remote version: ${remoteHash}`);
+        if (localHash === remoteHash) {
+          console.log(`[API Update] Already up to date.`);
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ success: true, upToDate: true, message: '系统已是最新版本，无需更新。' }));
+          return;
+        }
+      }
+      
+      // Hashes differ or parse failed: proceed with update
+      runForcedUpdate(res);
     });
-
-    res.end(JSON.stringify({ success: true, message: '系统升级已在后台启动，正在编译拉取，请稍候。' }));
     return;
   }
 
