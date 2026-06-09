@@ -13,3 +13,7 @@ services:
       - ./src/data:/app/src/data
     environment:
       - TZ=Asia/Shanghai
+      # Mutation APIs (/api/crawl, /api/update, /api/feedback) are disabled unless ADMIN_TOKEN is set.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # Self-update remains off unless explicitly enabled for a trusted NAS/LAN deployment.
+      - ENABLE_SELF_UPDATE=${ENABLE_SELF_UPDATE:-false}

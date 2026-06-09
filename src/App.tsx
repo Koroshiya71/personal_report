@@ -33,6 +33,8 @@ interface ShopItem {
   address: string;
   description: string;
   link?: string;
+  source_urls?: string[];
+  confidence?: 'high' | 'medium' | 'low';
 }
 
 interface PrimaryNewsItem {
@@ -57,7 +59,11 @@ interface MealRecommendation {
   reason: string;
   address?: string;
   delivery_type: "支持外卖" | "仅限堂食" | "外卖/堂食皆可";
+  source_urls?: string[];
+  confidence?: 'high' | 'medium' | 'low';
 }
+
+type FeedbackType = 'favorite' | 'dislike' | 'more_like_this';
 
 interface DailyReport {
   date: string;
@@ -105,6 +111,16 @@ const getAdminHeaders = (): HeadersInit | undefined => {
   return adminToken ? { 'X-Admin-Token': adminToken } : undefined;
 };
 
+const isConfirmedAddress = (address?: string) => {
+  return Boolean(address && !address.includes('待确认') && !address.includes('未知'));
+};
+
+const confidenceLabel = (confidence?: 'high' | 'medium' | 'low') => {
+  if (confidence === 'high') return '信息较可靠';
+  if (confidence === 'low') return '信息待确认';
+  return '信息一般';
+};
+
 function App() {
   const [activeTab, setActiveTab] = useState<'daily' | 'weekly' | 'anime'>('daily');
   const [dailyReports, setDailyReports] = useState<{ [date: string]: DailyReport }>({});
@@ -129,6 +145,49 @@ function App() {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
   };
+
+  const sendFeedback = async (
+    type: FeedbackType,
+    itemTitle: string,
+    itemCategory: string,
+    itemLink?: string
+  ) => {
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(getAdminHeaders() || {}),
+        },
+        body: JSON.stringify({ type, itemTitle, itemCategory, itemLink }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showToast(data.error || '反馈保存失败，请确认 ADMIN_TOKEN 已配置。', 'error');
+        return;
+      }
+      const label = type === 'favorite' ? '已收藏' : type === 'dislike' ? '已标记不感兴趣' : '会参考这个方向推荐更多';
+      showToast(label, 'success');
+    } catch {
+      showToast('连接反馈接口失败。', 'error');
+    }
+  };
+
+  const FeedbackControls = ({
+    title,
+    category,
+    link,
+  }: {
+    title: string;
+    category: string;
+    link?: string;
+  }) => (
+    <div className="feedback-controls" onClick={(event) => event.preventDefault()}>
+      <button type="button" title="收藏" onClick={() => sendFeedback('favorite', title, category, link)}>收藏</button>
+      <button type="button" title="不感兴趣" onClick={() => sendFeedback('dislike', title, category, link)}>不感兴趣</button>
+      <button type="button" title="类似内容更多" onClick={() => sendFeedback('more_like_this', title, category, link)}>类似更多</button>
+    </div>
+  );
 
   const getMonthStr = (dateStr: string) => {
     const parts = dateStr.split('-');
@@ -617,7 +676,7 @@ function App() {
                 <div className="tldr-card">
                   <div className="tldr-header">
                     <span style={{ fontSize: '18px' }}>💡</span>
-                    <h3 className="tldr-title">TL;DR 今日总结</h3>
+                    <h3 className="tldr-title">今日编辑判断</h3>
                   </div>
                   <div className="tldr-content">{renderMarkdown(activeDailyReport.summary)}</div>
                 </div>
@@ -645,6 +704,7 @@ function App() {
                                   <span className="editor-comment-text">{game.editor_comment}</span>
                                 </div>
                               )}
+                              <FeedbackControls title={game.title} category="daily_game_primary" link={game.link} />
                               <div className="card-footer" style={{ marginTop: '12px' }}>
                                 <span>深度分析</span>
                                 <span className="read-more">阅读全文 →</span>
@@ -710,6 +770,7 @@ function App() {
                               <span className="event-price">{evt.price}</span>
                               <span className={`event-status ${evt.status.includes('售') ? 'status-active' : ''}`}>{evt.status}</span>
                             </div>
+                            <FeedbackControls title={evt.title} category="daily_event" link={evt.link} />
                           </div>
                         </a>
                       ))}
@@ -745,6 +806,7 @@ function App() {
                                   <span className="editor-comment-text">{tech.editor_comment}</span>
                                 </div>
                               )}
+                              <FeedbackControls title={tech.title} category="daily_tech_primary" link={tech.link} />
                               <div className="card-footer" style={{ marginTop: '12px' }}>
                                 <span>前沿思考</span>
                                 <span className="read-more" style={{ color: 'var(--color-secondary)' }}>阅读全文 →</span>
@@ -827,6 +889,11 @@ function App() {
                             <div className="meal-meta-row">
                               <span className="meal-cuisine-tag">{meal.cuisine}</span>
                               <span className="meal-price-tag">{meal.price_range}</span>
+                              {meal.confidence && (
+                                <span className={`meal-confidence confidence-${meal.confidence}`}>
+                                  {confidenceLabel(meal.confidence)}
+                                </span>
+                              )}
                             </div>
                             
                             <div className="meal-suitability-box">
@@ -840,16 +907,19 @@ function App() {
                               <div className="meal-address-box">
                                 <span className="address-icon">📍</span>
                                 <span className="address-text" title={meal.address}>{meal.address}</span>
-                                <a 
-                                  className="meal-map-btn"
-                                  href={`https://map.baidu.com/?newmap=1&ie=utf-8&s=s%26wd%3D${encodeURIComponent('深圳市福田区 ' + meal.name)}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  🗺️ 导航
-                                </a>
+                                {isConfirmedAddress(meal.address) && (
+                                  <a
+                                    className="meal-map-btn"
+                                    href={`https://map.baidu.com/?newmap=1&ie=utf-8&s=s%26wd%3D${encodeURIComponent(meal.address + ' ' + meal.name)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    🗺️ 导航
+                                  </a>
+                                )}
                               </div>
                             )}
+                            <FeedbackControls title={meal.name} category="meal" />
                           </div>
                         </div>
                       ))}
@@ -954,6 +1024,7 @@ function App() {
                                 🗺️ 地图导航
                               </a>
                             </div>
+                            <FeedbackControls title={shop.name} category="weekly_shop" link={shop.link || shop.source_urls?.[0]} />
                           </div>
                         </div>
                       ))}
@@ -992,6 +1063,7 @@ function App() {
                               <span className="event-price">{evt.price}</span>
                               <span className={`event-status ${evt.status.includes('售') ? 'status-active' : ''}`}>{evt.status}</span>
                             </div>
+                            <FeedbackControls title={evt.title} category="weekly_event" link={evt.link} />
                           </div>
                         </a>
                       ))}
@@ -1027,6 +1099,7 @@ function App() {
                                   <span className="editor-comment-text">{game.editor_comment}</span>
                                 </div>
                               )}
+                              <FeedbackControls title={game.title} category="weekly_game_primary" link={game.link} />
                               <div className="card-footer" style={{ marginTop: '12px' }}>
                                 <span>本周精选</span>
                                 <span className="read-more">阅读全文 →</span>
@@ -1086,6 +1159,7 @@ function App() {
                                   <span className="editor-comment-text">{tech.editor_comment}</span>
                                 </div>
                               )}
+                              <FeedbackControls title={tech.title} category="weekly_tech_primary" link={tech.link} />
                               <div className="card-footer" style={{ marginTop: '12px' }}>
                                 <span>本周精选</span>
                                 <span className="read-more" style={{ color: 'var(--color-secondary)' }}>阅读全文 →</span>

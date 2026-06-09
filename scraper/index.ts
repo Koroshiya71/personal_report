@@ -6,7 +6,7 @@ import { fetchBilibiliShows } from './parser_bilibili';
 import { fetchBangumiCalendar } from './parser_bangumi';
 import { performSearch } from './search';
 import { processReport, processWeeklyReport, selectHighValueRss, getShanghaiWeekday } from './llm_processor';
-import type { FinalReport, WeeklyReport, ActivityItem, SearchResult } from './llm_processor';
+import type { FinalReport, WeeklyReport, ActivityItem, SearchResult, FeedbackSummary } from './llm_processor';
 
 dotenv.config();
 
@@ -16,6 +16,39 @@ const configPath = path.join(__dirname, 'config.json');
 const reportDir = path.join(__dirname, 'src', 'data');
 const reportPath = path.join(reportDir, 'reports.json');
 const weeklyPath = path.join(reportDir, 'weekly.json');
+const feedbackPath = path.join(reportDir, 'feedback.json');
+
+interface FeedbackEntry {
+  type: 'favorite' | 'dislike' | 'more_like_this';
+  itemTitle: string;
+  itemCategory?: string;
+  createdAt: string;
+}
+
+function loadFeedbackSummary(): FeedbackSummary {
+  if (!fs.existsSync(feedbackPath)) {
+    return { total: 0, favorites: [], dislikes: [], moreLikeThis: [] };
+  }
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(feedbackPath, 'utf-8')) as { entries?: FeedbackEntry[] };
+    const entries = Array.isArray(raw.entries) ? raw.entries.slice(-80) : [];
+    const pick = (type: FeedbackEntry['type']) => entries
+      .filter((entry) => entry.type === type && entry.itemTitle)
+      .slice(-8)
+      .map((entry) => `${entry.itemTitle}${entry.itemCategory ? ` (${entry.itemCategory})` : ''}`);
+
+    return {
+      total: entries.length,
+      favorites: pick('favorite'),
+      dislikes: pick('dislike'),
+      moreLikeThis: pick('more_like_this')
+    };
+  } catch {
+    console.warn('[Feedback] feedback.json is corrupt or unreadable. Ignoring feedback for this run.');
+    return { total: 0, favorites: [], dislikes: [], moreLikeThis: [] };
+  }
+}
 
 async function runCrawler() {
   console.log('==================================================');
@@ -30,9 +63,11 @@ async function runCrawler() {
     }
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     const { location, preferences, sources } = config;
+    const feedbackSummary = loadFeedbackSummary();
 
     console.log(`Configured location: ${location.primary} (Secondary: ${location.secondary})`);
     console.log(`Preferences loaded: Games: ${preferences.games.include_genres.join('/')}, Activities: ${preferences.offline_activities.categories.join('/')}`);
+    console.log(`[Feedback] Loaded ${feedbackSummary.total} recent feedback entries.`);
 
     // Load existing reports database first (needed for filtering and weekly aggregation)
     let existingReports: { [date: string]: FinalReport } = {};
@@ -222,14 +257,20 @@ async function runCrawler() {
     const diningCenter = location.dining_center || '深圳市福田区景田北';
     const diningQueries = [
       `${location.primary} 福田区 今天天气`,
-      `site:dianping.com ${diningCenter} 简餐 外卖 推荐`,
-      `site:dianping.com ${diningCenter} 一个人吃 美食`
+      `大众点评 ${diningCenter} 外卖 单人 简餐 人均 地址`,
+      `大众点评 ${diningCenter} 粉面 快餐 小吃 人均 地址`,
+      `美团 ${diningCenter} 外卖 单人套餐 人均 地址`,
+      `${diningCenter} 附近 餐厅 人均 地址 推荐`
     ];
     console.log(`[Search - Dining] Launching ${diningQueries.length} parallel dining/weather searches...`);
-    const diningSearchPromises = diningQueries.map(q => performSearch(q, tavilyKey));
+    const diningSearchPromises = diningQueries.map((q, idx) => performSearch(
+      q,
+      tavilyKey,
+      idx === 0 ? { maxResults: 5 } : { searchDepth: 'advanced', maxResults: 8 }
+    ));
     const diningSearchResponses = await Promise.all(diningSearchPromises);
     const weatherSearchResults = diningSearchResponses[0];
-    const foodSearchResults = [...diningSearchResponses[1], ...diningSearchResponses[2]];
+    const foodSearchResults = diningSearchResponses.slice(1).flat();
     console.log(`[Search - Dining] Collected ${weatherSearchResults.length} weather results and ${foodSearchResults.length} Jingtian North food search results.`);
 
     // 7. Process Daily Report with AI
@@ -243,7 +284,8 @@ async function runCrawler() {
       preferences,
       location,
       weatherSearchResults,
-      foodSearchResults
+      foodSearchResults,
+      feedbackSummary
     );
 
     // Save Daily Report
@@ -285,7 +327,8 @@ async function runCrawler() {
         bilibiliShows, // Pass ALL upcoming shows for the full weekly calendar view
         shopSearchResults,
         preferences,
-        location
+        location,
+        feedbackSummary
       );
 
       // Strip the large anime_calendar from the weekly report database to save space

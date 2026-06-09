@@ -3,7 +3,8 @@
     "primary": "深圳",
     "secondary": "广州",
     "primary_code": "440300",
-    "secondary_code": "440100"
+    "secondary_code": "440100",
+    "dining_center": "深圳市福田区景田北"
   },
   "preferences": {
     "games": {
@@ -17,6 +18,10 @@
     },
     "shops": {
       "categories": ["书店", "咖啡店", "精品咖啡", "酒吧", "清吧"]
+    },
+    "dining": {
+      "scenarios": ["外卖", "单人就餐"],
+      "categories": ["面食", "小吃简餐", "快餐", "粤菜"]
     }
   },
   "sources": {

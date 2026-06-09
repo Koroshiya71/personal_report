@@ -103,7 +103,15 @@ export interface Location {
   dining_center?: string;
 }
 
+export interface FeedbackSummary {
+  total: number;
+  favorites: string[];
+  dislikes: string[];
+  moreLikeThis: string[];
+}
+
 type DeliveryType = "支持外卖" | "仅限堂食" | "外卖/堂食皆可";
+type ConfidenceLevel = "high" | "medium" | "low";
 
 interface MealRecommendation {
   name: string;
@@ -113,6 +121,8 @@ interface MealRecommendation {
   reason: string;
   address?: string;
   delivery_type: DeliveryType;
+  source_urls?: string[];
+  confidence?: ConfidenceLevel;
 }
 
 interface ShopRecommendation {
@@ -122,6 +132,8 @@ interface ShopRecommendation {
   address: string;
   description: string;
   link?: string;
+  source_urls?: string[];
+  confidence?: ConfidenceLevel;
 }
 
 interface PrimarySelection {
@@ -317,6 +329,344 @@ function parseCleanJson<T>(text: string): T {
   }
 }
 
+function asText(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function normalizeDeliveryType(value: unknown): DeliveryType {
+  if (value === '仅限堂食' || value === '外卖/堂食皆可' || value === '支持外卖') {
+    return value;
+  }
+  return '外卖/堂食皆可';
+}
+
+function normalizeConfidence(value: unknown): ConfidenceLevel {
+  if (value === 'high' || value === 'medium' || value === 'low') {
+    return value;
+  }
+  return 'medium';
+}
+
+function normalizeUrls(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const urls = value.filter((item): item is string => typeof item === 'string' && item.trim().startsWith('http'));
+  return urls.length > 0 ? urls.slice(0, 3) : undefined;
+}
+
+function hasUnknownValue(value?: string): boolean {
+  return !value || value.includes('待确认') || value.includes('未知');
+}
+
+function hasTrustedLocalSource(urls?: string[]): boolean {
+  if (!urls || urls.length === 0) return false;
+  return urls.some((url) => /dianping\.com|meituan\.com|map\.baidu\.com|amap\.com|gaode\.com/i.test(url));
+}
+
+function calibrateLocalConfidence(
+  requested: unknown,
+  address?: string,
+  priceRange?: string,
+  urls?: string[]
+): ConfidenceLevel {
+  const normalized = normalizeConfidence(requested);
+  const addressUnknown = hasUnknownValue(address);
+  const priceUnknown = hasUnknownValue(priceRange);
+
+  if (addressUnknown && priceUnknown) return 'low';
+  if (addressUnknown || priceUnknown) return normalized === 'high' ? 'medium' : normalized;
+  if (!hasTrustedLocalSource(urls)) return normalized === 'high' ? 'medium' : normalized;
+  return normalized;
+}
+
+function normalizePrimarySelection(item: PrimarySelection, fallbackSource = '未知来源') {
+  return {
+    title: asText(item.title, '未命名条目'),
+    description: asText(item.description, '暂无摘要。'),
+    source: asText(item.source, fallbackSource),
+    editor_comment: asText(item.editor_comment, '这条内容值得保留，但目前缺少足够上下文来做更深判断。')
+  };
+}
+
+function normalizeSecondarySelection(item: SecondarySelection, fallbackSource = '未知来源') {
+  return {
+    title: asText(item.title, '未命名快讯'),
+    source: asText(item.source, fallbackSource)
+  };
+}
+
+function normalizeShop(item: ShopRecommendation, location: Location): ShopRecommendation {
+  const sourceUrls = normalizeUrls((item as { source_urls?: unknown }).source_urls);
+  const address = asText(item.address, '地址待确认');
+  return {
+    name: asText(item.name, '未命名地点'),
+    city: asText(item.city, location.primary),
+    category: asText(item.category, '生活去处'),
+    address,
+    description: asText(item.description, '搜索信息有限，建议出发前再确认营业状态。'),
+    link: asText(item.link),
+    source_urls: sourceUrls,
+    confidence: calibrateLocalConfidence((item as { confidence?: unknown }).confidence, address, undefined, sourceUrls)
+  };
+}
+
+function normalizeMeal(item: MealRecommendation): MealRecommendation {
+  const sourceUrls = normalizeUrls((item as { source_urls?: unknown }).source_urls);
+  const priceRange = asText(item.price_range, '人均待确认');
+  const address = asText(item.address);
+  return {
+    name: asText(item.name, '未命名餐厅'),
+    cuisine: asText(item.cuisine, '简餐'),
+    price_range: priceRange,
+    suitability_index: asText(item.suitability_index, '适宜度待确认'),
+    reason: asText(item.reason, '搜索信息有限，建议下单前再确认菜单和配送范围。'),
+    address,
+    delivery_type: normalizeDeliveryType(item.delivery_type),
+    source_urls: sourceUrls,
+    confidence: calibrateLocalConfidence((item as { confidence?: unknown }).confidence, address, priceRange, sourceUrls)
+  };
+}
+
+function formatPreferenceSummary(preferences: Preferences, feedbackSummary?: FeedbackSummary): string {
+  const dining = preferences.dining || { scenarios: ['外卖', '单人就餐'], categories: ['面食', '小吃简餐', '快餐', '粤菜'] };
+  const feedbackLines = feedbackSummary && feedbackSummary.total > 0
+    ? [
+        `- Recent favorites: ${feedbackSummary.favorites.join('；') || 'none'}`,
+        `- Recent dislikes: ${feedbackSummary.dislikes.join('；') || 'none'}`,
+        `- Wants more similar content: ${feedbackSummary.moreLikeThis.join('；') || 'none'}`
+      ].join('\n')
+    : '- No explicit feedback yet.';
+
+  return `
+User preferences:
+- Game genres: ${preferences.games.include_genres.join(' / ') || 'not specified'}
+- Exclude games: ${preferences.games.exclude_genres.join(' / ') || 'not specified'}
+- Art styles: ${preferences.games.art_styles.join(' / ') || 'not specified'}
+- Themes: ${preferences.games.themes.join(' / ') || 'not specified'}
+- Offline activities: ${preferences.offline_activities.categories.join(' / ') || 'not specified'}
+- Shops: ${preferences.shops.categories.join(' / ') || 'not specified'}
+- Dining scenarios: ${dining.scenarios.join(' / ')}
+- Dining categories: ${dining.categories.join(' / ')}
+
+User feedback memory:
+${feedbackLines}
+`;
+}
+
+function buildNewsPrompt(rssItems: RssItem[], preferences: Preferences, feedbackSummary?: FeedbackSummary): string {
+  return `
+You are a senior game and technology editor for a personal daily briefing.
+Write in natural Chinese: thoughtful, human, concise, and opinionated without sounding institutional.
+
+Raw RSS items collected today:
+${JSON.stringify(rssItems.map(item => ({ title: item.title, snippet: item.contentSnippet?.slice(0, 300), source: item.source, category: item.category })))}
+
+${formatPreferenceSummary(preferences, feedbackSummary)}
+
+Task:
+1. Select 3 to 5 valuable game articles for "games_primary". Prefer analysis, design discussion, reviews, market shifts, production stories, or highly discussable releases. Avoid plain press releases unless they reveal an important trend.
+2. Select 5 to 10 game briefs for "games_secondary".
+3. Select 3 to 5 valuable tech articles for "tech_primary". Prefer AI, productivity, open source, developer tools, hardware shifts, or technology with real implications. Filter clickbait and shallow controversy.
+4. Select 5 to 10 tech briefs for "tech_secondary".
+
+Editorial comment rules:
+- Write like a real editor talking to one person, not a brand account.
+- Explain trade-offs, incentives, constraints, or why the item may matter.
+- Avoid filler such as "总的来说", "值得一提的是", "这表明了", "展现了独特魅力".
+- If an item is only mildly useful, say so plainly.
+
+Output strict JSON:
+{
+  "games_primary": [{ "title": "Title", "description": "2-3 sentence Chinese summary", "source": "Source", "editor_comment": "1-2 sentence comment" }],
+  "games_secondary": [{ "title": "Title", "source": "Source" }],
+  "tech_primary": [{ "title": "Title", "description": "2-3 sentence Chinese summary", "source": "Source", "editor_comment": "1-2 sentence comment" }],
+  "tech_secondary": [{ "title": "Title", "source": "Source" }]
+}
+`;
+}
+
+function buildLocalLifePrompt(
+  currentDate: string,
+  location: Location,
+  preferences: Preferences,
+  shopSearchResults: SearchResult[],
+  eventSearchResults: SearchResult[],
+  weatherSearchResults?: SearchResult[],
+  foodSearchResults?: SearchResult[],
+  feedbackSummary?: FeedbackSummary
+): string {
+  const diningCenter = location.dining_center || '深圳市福田区景田北';
+  const diningPreferences = preferences.dining || { scenarios: ['外卖', '单人就餐'], categories: ['面食', '小吃简餐', '快餐', '粤菜'] };
+
+  return `
+You are a careful local lifestyle editor for ${location.primary}/${location.secondary}.
+Today is ${currentDate}. Use only the supplied search evidence when making concrete claims.
+
+${formatPreferenceSummary(preferences, feedbackSummary)}
+
+Shop search results:
+${JSON.stringify(shopSearchResults)}
+
+Event search results:
+${JSON.stringify(eventSearchResults)}
+
+Weather search results:
+${JSON.stringify(weatherSearchResults || [])}
+
+Food search results near "${diningCenter}":
+${JSON.stringify(foodSearchResults || [])}
+
+Tasks:
+1. Recommend up to 3 lifestyle places matching: ${preferences.shops.categories.join(' / ')}.
+2. Extract any currently active or upcoming events. Ignore events that ended before ${currentDate}; avoid events starting more than 90 days later.
+3. Recommend 2-3 dining options near "${diningCenter}" for ${diningPreferences.scenarios.join(' / ')} and ${diningPreferences.categories.join(' / ')}.
+
+Quality rules:
+- Do not invent exact addresses. If evidence is weak, use "地址待确认" and confidence "low".
+- Do not invent per-person price. If no source mentions price, use "人均待确认" rather than estimating.
+- Rank restaurants with confirmed address AND confirmed price above low-evidence restaurants.
+- Avoid recommending a restaurant with both unknown address and unknown price unless there are fewer than 2 usable options.
+- Prefer concrete merchant pages, map/place pages, Dianping/Meituan snippets, or result snippets that include price/address signals.
+- Treat social media/video posts as context only; they are not enough for high-confidence price or address evidence.
+- Prefer takeout and solo-friendly meals. A very strong dine-in-only place is allowed, but mark it "仅限堂食".
+- Include "source_urls" when source URLs are available.
+- Set confidence to "high" only when both name and at least one of address/price are supported by source evidence; use "low" when key fields are unknown.
+- Warm is okay, but do not over-sell. Mention what to order only when supported by context.
+
+Output strict JSON:
+{
+  "shops": [{ "name": "Name", "city": "${location.primary}", "category": "书店/咖啡店/酒吧", "address": "Address", "description": "Recommendation", "source_urls": ["https://..."], "confidence": "medium" }],
+  "extra_events": [{ "title": "Event Title", "venue": "Venue", "time": "Time", "price": "Price", "city": "City", "link": "link", "source": "Source" }],
+  "meals": [{ "name": "Restaurant", "cuisine": "Cuisine", "price_range": "人均 xx 元", "suitability_index": "今日适宜度", "reason": "Reason", "address": "Address", "delivery_type": "支持外卖", "source_urls": ["https://..."], "confidence": "medium" }]
+}
+`;
+}
+
+function buildDailySummaryPrompt(
+  gamesPrimary: FinalReport['games_primary'],
+  techPrimary: FinalReport['tech_primary'],
+  feedbackSummary?: FeedbackSummary
+): string {
+  return `
+Write "今日编辑判断" for a personal daily report in Chinese. This is the editor's lead, not a summary.
+
+Your job is to help the reader decide what deserves attention today.
+Do NOT summarize every module. Do NOT repeat anime schedules, meal cards, shop cards, or event lists.
+Do NOT simply rewrite the selected item descriptions.
+
+Output structure:
+1. Start with one short lead sentence beginning with "今天重点看：" that names the day's main thread or tension.
+2. Then output exactly 3 bullets:
+   - "优先读": the single most important item/theme and why it matters beyond the headline.
+   - "顺手看": one secondary item/theme worth scanning and why.
+   - "可以跳过/保留观察": one item/theme that is noisy, uncertain, or less urgent, with a reason.
+
+Tone:
+- Natural human editor, slightly companionable but not sentimental.
+- Concrete, opinionated, and concise.
+- Avoid generic greetings, blessings, module directory summaries, and AI-ish filler.
+- Make connections across items when possible: industry incentives, product strategy, regulation, creator economy, technical constraints, or user impact.
+- Only use facts and item names present in the provided selected primary items. Do not introduce outside news or unsupported claims.
+- If there is no strong theme, say that today's signal is scattered and name the one practical thing worth keeping.
+
+Today's selected primary items:
+Games: ${JSON.stringify(gamesPrimary.map(g => ({ title: g.title, description: g.description, editor_comment: g.editor_comment, source: g.source })))}
+Tech: ${JSON.stringify(techPrimary.map(t => ({ title: t.title, description: t.description, editor_comment: t.editor_comment, source: t.source })))}
+Feedback context: ${JSON.stringify(feedbackSummary || { total: 0 })}
+
+Keep it under 260 Chinese characters.
+`;
+}
+
+function buildWeeklyCompilePrompt(
+  currentDate: string,
+  location: Location,
+  preferences: Preferences,
+  allGamesPrimary: FinalReport['games_primary'],
+  allGamesSecondary: FinalReport['games_secondary'],
+  allTechPrimary: FinalReport['tech_primary'],
+  allTechSecondary: FinalReport['tech_secondary'],
+  shopSearchResults: SearchResult[],
+  feedbackSummary?: FeedbackSummary
+): string {
+  return `
+You are a senior editor compiling a personal weekly report for ${currentDate}.
+The weekly report should identify patterns, worthwhile items, and things the user may want to revisit.
+
+${formatPreferenceSummary(preferences, feedbackSummary)}
+
+Games Primary: ${JSON.stringify(allGamesPrimary.map(g => ({ title: g.title, source: g.source, description: g.description, editor_comment: g.editor_comment })))}
+Games Secondary: ${JSON.stringify(allGamesSecondary.map(g => ({ title: g.title, source: g.source })))}
+Tech Primary: ${JSON.stringify(allTechPrimary.map(t => ({ title: t.title, source: t.source, description: t.description, editor_comment: t.editor_comment })))}
+Tech Secondary: ${JSON.stringify(allTechSecondary.map(t => ({ title: t.title, source: t.source })))}
+Shop search results: ${JSON.stringify(shopSearchResults)}
+
+Task:
+1. Select top 3-5 games for "best_games_primary" and write synthesized descriptions/comments.
+2. Select top 5-10 games for "best_games_secondary".
+3. Select top 3-5 tech for "best_tech_primary" and write synthesized descriptions/comments.
+4. Select top 5-10 tech for "best_tech_secondary".
+5. Recommend up to 3 lifestyle shops in ${location.primary}/${location.secondary}; include source_urls/confidence when possible.
+6. Generate "stats.fun_insight": 60-80 Chinese characters about this week's interest pattern.
+
+Comment style:
+- Human, thoughtful, and direct.
+- Prefer trade-offs and pattern recognition over praise.
+- Avoid robotic phrases and marketing language.
+
+Output strict JSON:
+{
+  "best_games_primary": [{ "title": "Title", "description": "Summary", "source": "Source", "editor_comment": "Comment" }],
+  "best_games_secondary": [{ "title": "Title", "source": "Source" }],
+  "best_tech_primary": [{ "title": "Title", "description": "Summary", "source": "Source", "editor_comment": "Comment" }],
+  "best_tech_secondary": [{ "title": "Title", "source": "Source" }],
+  "shops": [{ "name": "Name", "city": "${location.primary}", "category": "Category", "address": "Address", "description": "Desc", "source_urls": ["https://..."], "confidence": "medium" }],
+  "stats": { "fun_insight": "Insight" }
+}
+`;
+}
+
+function buildWeeklySummaryPrompt(
+  currentDate: string,
+  gamesPrimary: WeeklyReport['games_primary'],
+  techPrimary: WeeklyReport['tech_primary'],
+  stats?: WeeklyReport['stats']
+): string {
+  return `
+Generate "本周观察" in Chinese for a personal weekly report.
+Do not list every module. Focus on trends, recurring interests, and what is worth revisiting.
+
+Weekly selected items:
+Games: ${JSON.stringify(gamesPrimary.map(g => ({ title: g.title, editor_comment: g.editor_comment })))}
+Tech: ${JSON.stringify(techPrimary.map(t => ({ title: t.title, editor_comment: t.editor_comment })))}
+Stats insight: ${stats?.fun_insight || ''}
+Week date: ${currentDate}
+
+Output a Markdown bullet list with 3-5 bullets. Keep it natural, editorial, and under 220 Chinese characters.
+`;
+}
+
+function buildDeepSearchPrompt(rssItems: RssItem[]): string {
+  const listForPrompt = rssItems.map((item, idx) => ({
+    index: idx,
+    title: item.title,
+    source: item.source,
+    category: item.category,
+    snippet: item.contentSnippet?.slice(0, 120) || ''
+  }));
+
+  return `
+You are an expert news editor. Select exactly 2 or 3 items that deserve deeper search context.
+Pick articles with analysis potential, product releases, controversies, design/technology implications, or strong user preference fit.
+Avoid simple announcements, deals, routine updates, and duplicate stories.
+
+Articles List:
+${JSON.stringify(listForPrompt)}
+
+Output strict JSON:
+{ "indices": [0, 1] }
+`;
+}
+
 export function getShanghaiDateString(date = new Date()): string {
   const formatter = new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -348,6 +698,7 @@ export async function processReport(
   location: Location,
   weatherSearchResults?: SearchResult[],
   foodSearchResults?: SearchResult[],
+  feedbackSummary?: FeedbackSummary,
   useLlm = true
 ): Promise<FinalReport> {
   const currentDate = getShanghaiDateString();
@@ -523,44 +874,7 @@ export async function processReport(
     console.log('[LLM Processor] Initiating OpenAI Chat completions...');
 
     // 1. Process Games and Tech News
-    const newsPrompt = `
-You are a professional, senior tech and game editor who has deep industry knowledge, meticulous analytical skills, and excellent taste. 
-Here is a list of raw RSS news items collected today:
-${JSON.stringify(rssItems.map(item => ({ title: item.title, snippet: item.contentSnippet?.slice(0, 250), source: item.source, category: item.category })))}
-
-User Preferences:
-- Target Games: RPG, Action (动作), Strategy/Card (策略卡牌). Exclude Shooters (射击) and Horror (恐怖) games. Prefers Japanese anime art style (日系二次元), samurai (武士), Wuxia/Xianxia (武侠/仙侠) themes.
-- Target Tech: AI developments, productivity, geeks, open source, technological breakthroughs.
-
-Your Task:
-1. Games section:
-   - Select 3 to 5 high-quality articles for "games_primary". These MUST be valuable discussions, deep analyses, product reviews, or retrospectives (DO NOT select pure press release announcements). Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
-   - Select 5 to 10 standard news announcements or quick briefs for "games_secondary" (only need title, source).
-2. Tech section:
-   - Select 3 to 5 high-quality, objective, and insightful articles for "tech_primary". FILTER OUT low-quality clickbaits, flame wars, or extreme/opinionated/hostile statements. Clarify and enrich brief or confusing details in the original summaries based on your knowledge. Write a detailed summary in Chinese and a 1-2 sentence thoughtful commentary ("editor_comment").
-   - Select 5 to 10 quick tech news for "tech_secondary" (only need title, source).
-
-Guidelines for writing "editor_comment" (CRITICAL FOR TONE):
-- Write in a natural, colloquial, yet intellectually engaging tone in Chinese, like a real person sharing insights with a friend. Use a first-person or collaborative voice (e.g., "我感觉...", "从我们的视角来看...", "或许可以关注..."). Speak as a peer rather than an institutional authority or marketing copywriter.
-- AVOID AI-style fluff, jargon-filled marketing buzzwords, and robotic templates (e.g., do NOT start with or use phrases like "这表明了...", "总的来说...", "值得一提的是...", "该事件标志着...", "不得不说...", "展现了其独特的魅力").
-- Be rational, objective, and multi-dimensional. Do not offer simple, shallow praise or criticism. Instead, dissect design trade-offs, underlying motivations, technical constraints, or future implications in 1-2 concise, high-density sentences.
-
-Output the results strictly as a JSON object of this structure:
-{
-  "games_primary": [
-    { "title": "Chinese Title", "description": "Detailed Chinese summary (2-3 sentences)", "source": "source_name", "editor_comment": "Your insightful editorial comment" }
-  ],
-  "games_secondary": [
-    { "title": "Chinese Title", "source": "source_name" }
-  ],
-  "tech_primary": [
-    { "title": "Chinese Title", "description": "Detailed Chinese summary (2-3 sentences)", "source": "source_name", "editor_comment": "Your insightful editorial comment" }
-  ],
-  "tech_secondary": [
-    { "title": "Chinese Title", "source": "source_name" }
-  ]
-}
-`;
+    const newsPrompt = buildNewsPrompt(rssItems, preferences, feedbackSummary);
 
     const newsResponse = await openaiClient.chat.completions.create({
       model: modelName,
@@ -571,85 +885,41 @@ Output the results strictly as a JSON object of this structure:
 
     const parsedNews = parseCleanJson<ParsedNewsResponse>(newsResponse.choices[0].message.content || '{}');
     
-    const games_primary = (parsedNews.games_primary || []).map((g) => {
+    const games_primary = (parsedNews.games_primary || []).map((raw) => {
+      const g = normalizePrimarySelection(raw);
       const match = rssItems.find(item => item.title === g.title || g.title.includes(item.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
     
-    const games_secondary = (parsedNews.games_secondary || []).map((g) => {
+    const games_secondary = (parsedNews.games_secondary || []).map((raw) => {
+      const g = normalizeSecondarySelection(raw);
       const match = rssItems.find(item => item.title === g.title || g.title.includes(item.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
 
-    const tech_primary = (parsedNews.tech_primary || []).map((t) => {
+    const tech_primary = (parsedNews.tech_primary || []).map((raw) => {
+      const t = normalizePrimarySelection(raw);
       const match = rssItems.find(item => item.title === t.title || t.title.includes(item.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const tech_secondary = (parsedNews.tech_secondary || []).map((t) => {
+    const tech_secondary = (parsedNews.tech_secondary || []).map((raw) => {
+      const t = normalizeSecondarySelection(raw);
       const match = rssItems.find(item => item.title === t.title || t.title.includes(item.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
     // 2. Process Local Shop, Activity, and Dining Recommendations
-    const diningCenter = location.dining_center || '深圳市福田区景田北';
-    const diningPreferences = preferences.dining || { scenarios: ["外卖", "单人就餐"], categories: ["面食", "小吃简餐", "快餐", "粤菜"] };
-
-    const searchPrompt = `
-You are a local lifestyle guide for ${location.primary} and ${location.secondary} areas.
-Today's date is: ${currentDate}
-
-Task 1: Shop recommendations
-The user wants recommendations for Bookstore (书店), Coffee shops (咖啡店/精品咖啡), and Bars (清吧/酒吧) in ${location.primary} (mainly) or ${location.secondary}.
-Shops Info: ${JSON.stringify(shopSearchResults)}
-Please select exactly 3 premium shops (ideally one bookstore, one cafe, one bar/pub) and compile them.
-
-Task 2: Offline Events
-CPP/Event Info: ${JSON.stringify(eventSearchResults)}
-Describe any interesting events (like CPP doujin events, exhibitions, or art shows).
-CRITICAL TIME REQUIREMENT:
-- You must strictly filter out and IGNORE any events that have already ended prior to today (${currentDate}).
-- Only select events that are currently active, running, or upcoming (end date >= ${currentDate}).
-- Avoid selecting events that are too far in the future (e.g. starting more than 90 days away from ${currentDate}). Focus on events happening in the next 1-2 months.
-
-Task 3: Daily Meal Recommendations
-Recommend 2-3 daily dining options near "${diningCenter}".
-We crawled the weather for today: ${JSON.stringify(weatherSearchResults)}
-We also crawled popular restaurants/food on Dianping near "${diningCenter}": ${JSON.stringify(foodSearchResults)}
-
-Dining preferences:
-- Dining Center: ${diningCenter}
-- Main Scenarios: ${diningPreferences.scenarios.join('/')} (mainly Takeout 外卖 & Solo Dining 单人就餐)
-- Target Categories: ${diningPreferences.categories.join('/')}
-
-Guidelines for meal recommendations:
-- The user primarily wants to order Takeout (外卖) and eat alone (单人就餐). Prioritize restaurants that support takeout, have great single-portion options (like set meals, noodle bowls, quick bites), and are nearby.
-- If you find an exceptionally high-quality restaurant that does NOT support delivery but is worth a special offline trip, you can recommend it as "仅限堂食", clearly stating it is a "线下特别推荐".
-- Customize the "suitability_index" (今日适宜指数) based on today's weather/weekday. For example, if it's rainy or cold, recommend something warm (like hot soup noodles, pork stomach chicken, porridge) with index like "95% (小雨天气，最适合来一份热腾腾的猪肚鸡/拉面)". If it's very hot, suggest something refreshing (like cold noodles, sushi, coconut chicken) with index like "92% (酷暑难耐，适合吃爽口椰子鸡解暑)".
-- The "reason" should be warm, companion-like, and explain why this restaurant fits the weather, weekday status, or single/takeout preference. Explain what specific dishes to order.
-- Ensure the restaurants recommended are real places from the Dianping search results (or highly credible/realistic ones near Jingtian North).
-
-Output the results strictly as a JSON object:
-{
-  "shops": [
-    { "name": "Shop Name", "city": "${location.primary}", "category": "书店/咖啡店/酒吧", "address": "Address", "description": "Recommendation summary" }
-  ],
-  "extra_events": [
-    { "title": "Event Title", "venue": "Venue", "time": "Time", "price": "Price", "city": "City", "link": "link", "source": "Source" }
-  ],
-  "meals": [
-    {
-      "name": "Restaurant/Food Name",
-      "cuisine": "Cuisine style (e.g., 日式拉面, 广式早茶)",
-      "price_range": "Average Cost (e.g., 人均 20-30 元)",
-      "suitability_index": "Suitability index and weather note (e.g., 95% - Rain and chilly, perfect for a warm bowl of soup)",
-      "reason": "Insightful recommendation reason (2-3 sentences)",
-      "address": "Address near ${diningCenter}",
-      "delivery_type": "支持外卖"
-    }
-  ]
-}
-`;
+    const searchPrompt = buildLocalLifePrompt(
+      currentDate,
+      location,
+      preferences,
+      shopSearchResults,
+      eventSearchResults,
+      weatherSearchResults,
+      foodSearchResults,
+      feedbackSummary
+    );
 
     const searchResponse = await openaiClient.chat.completions.create({
       model: modelName,
@@ -659,8 +929,8 @@ Output the results strictly as a JSON object:
     });
 
     const parsedSearch = parseCleanJson<ParsedSearchResponse>(searchResponse.choices[0].message.content || '{}');
-    const shops: FinalReport['shops'] = parsedSearch.shops || [];
-    const meals: MealRecommendation[] = parsedSearch.meals || [];
+    const shops: FinalReport['shops'] = (parsedSearch.shops || []).map((shop) => normalizeShop(shop, location));
+    const meals: MealRecommendation[] = (parsedSearch.meals || []).map(normalizeMeal);
     
     if (parsedSearch.extra_events && Array.isArray(parsedSearch.extra_events)) {
       parsedSearch.extra_events.forEach((evt, idx) => {
@@ -684,29 +954,8 @@ Output the results strictly as a JSON object:
       });
     }
 
-    // 3. Generate Overall Daily Summary
-    const summaryPrompt = `
-Based on today's compiled content, write a beautiful daily briefing summary (今日快讯) for the user in Chinese.
-Keep it warm, engaging, and personalized. Speak as their companion.
-
-Instead of writing a single large paragraph of text, you MUST structure it as a clean list using Markdown bullet points, categorizing the highlights of the day. For example:
-亲爱的朋友，为你送上今天的专属快讯！☕️
-
-- 🎮 **游戏精选**：这里总结1-2个最亮眼的游戏新闻...
-- 🚀 **前沿科技**：总结1-2个科技突破亮点...
-- 📺 **今日番剧**：提到今天放送的精彩番剧...
-- ☕ **生活去处**：用温暖的语言推荐今天挑选的探店去处...
-- 🍱 **就餐建议**：结合今天的天气和心情，简单点明就餐去处...
-
-愿你拥有充实、愉快而美好的一天！✨
-
-Summary of today's content:
-- Games: ${JSON.stringify(games_primary.map(g => g.title))}
-- Shops: ${JSON.stringify(shops.map(s => s.name))}
-- Anime: ${JSON.stringify(filteredAnime.slice(0, 2).map(a => a.title))}
-- Meals: ${JSON.stringify(meals.map(m => m.name))}
-Write around 180-220 words.
-`;
+    // 3. Generate editorial daily TL;DR
+    const summaryPrompt = buildDailySummaryPrompt(games_primary, tech_primary, feedbackSummary);
 
     const summaryResponse = await openaiClient.chat.completions.create({
       model: modelName,
@@ -740,6 +989,7 @@ Write around 180-220 words.
       location,
       weatherSearchResults,
       foodSearchResults,
+      feedbackSummary,
       false
     );
   }
@@ -751,7 +1001,9 @@ export async function processWeeklyReport(
   bilibiliShows: ActivityItem[],
   shopSearchResults: SearchResult[],
   preferences: Preferences,
-  location: Location
+  location: Location,
+  feedbackSummary?: FeedbackSummary,
+  useLlm = true
 ): Promise<WeeklyReport> {
   const currentDate = getShanghaiDateString();
   console.log(`[LLM Processor] Generating Weekly Report for date: ${currentDate}`);
@@ -765,7 +1017,7 @@ export async function processWeeklyReport(
     })
     .slice(0, 15);
 
-  if (!openaiClient) {
+  if (!openaiClient || !useLlm) {
     console.log('[LLM Processor] OpenAI API not configured. Generating weekly report in fallback mode.');
 
     const weeklyGamesPrimary: FinalReport['games_primary'] = [];
@@ -882,40 +1134,17 @@ export async function processWeeklyReport(
       });
     }
 
-    const compilePrompt = `
-You are a senior lifestyle and technology editor. 
-Here are the daily primary articles curated throughout the week (including their daily summaries and daily commentaries):
-Games Primary: ${JSON.stringify(allGamesPrimary.map(g => ({ title: g.title, source: g.source, description: g.description, editor_comment: g.editor_comment })))}
-Games Secondary: ${JSON.stringify(allGamesSecondary.map(g => ({ title: g.title, source: g.source })))}
-Tech Primary: ${JSON.stringify(allTechPrimary.map(t => ({ title: t.title, source: t.source, description: t.description, editor_comment: t.editor_comment })))}
-Tech Secondary: ${JSON.stringify(allTechSecondary.map(t => ({ title: t.title, source: t.source })))}
-Shop search results: ${JSON.stringify(shopSearchResults)}
-
-Task:
-1. Select top 3-5 games for "best_games_primary" (deep reports). Write a synthesized detailed description and a 1-2 sentence thoughtful commentary ("editor_comment").
-2. Select top 5-10 games for "best_games_secondary" (briefs).
-3. Select top 3-5 tech for "best_tech_primary" (insightful, filter clickbait). Write a synthesized detailed description and a 1-2 sentence thoughtful commentary ("editor_comment").
-4. Select top 5-10 tech for "best_tech_secondary" (briefs).
-5. Recommend 3 lifestyle shops in ${location.primary}/${location.secondary}.
-6. Generate a witty, humorous, or warm 60-80 character weekly insight summary in Chinese for "stats" -> "fun_insight" analyzing the user's weekly ACG/Tech interests or activities. Do not mention robotic filler phrases.
-
-Guidelines for writing "editor_comment" (CRITICAL FOR TONE):
-- Write in a natural, colloquial, yet intellectually engaging tone in Chinese, like a real person sharing insights with a friend. Use a first-person or collaborative voice (e.g., "我感觉...", "从我们的视角来看...", "或许可以关注..."). Speak as a peer rather than an institutional authority or marketing copywriter.
-- AVOID AI-style fluff, jargon-filled marketing buzzwords, and robotic templates (e.g., do NOT start with or use phrases like "这表明了...", "总的来说...", "值得一提的是...", "该事件标志着...", "不得不说...", "展现了其独特的魅力").
-- Be rational, objective, and multi-dimensional. Do not offer simple, shallow praise or criticism. Instead, dissect design trade-offs, underlying motivations, technical constraints, or future implications in 1-2 concise, high-density sentences. You may adapt or refine the daily commentaries provided in the input.
-
-Output strict JSON:
-{
-  "best_games_primary": [{ "title": "Title", "description": "Summary", "source": "Source", "editor_comment": "Comment" }],
-  "best_games_secondary": [{ "title": "Title", "source": "Source" }],
-  "best_tech_primary": [{ "title": "Title", "description": "Summary", "source": "Source", "editor_comment": "Comment" }],
-  "best_tech_secondary": [{ "title": "Title", "source": "Source" }],
-  "shops": [{ "name": "Name", "city": "${location.primary}", "category": "Category", "address": "Address", "description": "Desc" }],
-  "stats": {
-    "fun_insight": "Witty and engaging insight in Chinese about this week's trends or user profile (60-80 chars)."
-  }
-}
-`;
+    const compilePrompt = buildWeeklyCompilePrompt(
+      currentDate,
+      location,
+      preferences,
+      allGamesPrimary,
+      allGamesSecondary,
+      allTechPrimary,
+      allTechSecondary,
+      shopSearchResults,
+      feedbackSummary
+    );
 
     const weeklyResponse = await openaiClient.chat.completions.create({
       model: modelName,
@@ -929,27 +1158,31 @@ Output strict JSON:
     const allOriginalGames = [...allGamesPrimary, ...allGamesSecondary];
     const allOriginalTech = [...allTechPrimary, ...allTechSecondary];
 
-    const games_primary = (parsedWeekly.best_games_primary || []).map((g) => {
+    const games_primary = (parsedWeekly.best_games_primary || []).map((raw) => {
+      const g = normalizePrimarySelection(raw);
       const match = allOriginalGames.find(orig => orig.title === g.title || g.title.includes(orig.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
     
-    const games_secondary = (parsedWeekly.best_games_secondary || []).map((g) => {
+    const games_secondary = (parsedWeekly.best_games_secondary || []).map((raw) => {
+      const g = normalizeSecondarySelection(raw);
       const match = allOriginalGames.find(orig => orig.title === g.title || g.title.includes(orig.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
 
-    const tech_primary = (parsedWeekly.best_tech_primary || []).map((t) => {
+    const tech_primary = (parsedWeekly.best_tech_primary || []).map((raw) => {
+      const t = normalizePrimarySelection(raw);
       const match = allOriginalTech.find(orig => orig.title === t.title || t.title.includes(orig.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const tech_secondary = (parsedWeekly.best_tech_secondary || []).map((t) => {
+    const tech_secondary = (parsedWeekly.best_tech_secondary || []).map((raw) => {
+      const t = normalizeSecondarySelection(raw);
       const match = allOriginalTech.find(orig => orig.title === t.title || t.title.includes(orig.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const shops: WeeklyReport['shops'] = parsedWeekly.shops || [];
+    const shops: WeeklyReport['shops'] = (parsedWeekly.shops || []).map((shop) => normalizeShop(shop, location));
 
     const stats = {
       total_articles: games_primary.length + games_secondary.length + tech_primary.length + tech_secondary.length,
@@ -959,25 +1192,8 @@ Output strict JSON:
       fun_insight: parsedWeekly.stats?.fun_insight || "本周你在数字世界和现实生活中都非常充实哦！"
     };
 
-    // Create a beautiful weekly summary briefing
-    const summaryPrompt = `
-Generate a warm and motivating Weekly Briefing (周报前言) in Chinese for the user.
-Speak as their AI life companion.
-You MUST structure this briefing using clean Markdown bullet points to summarize the highlights for the week. For example:
-哈罗！这是为你整理的本周看点总结，祝你度过充实的一周：
-
-- 🎮 **本周游戏**：总结本周最精彩的游戏热点...
-- 🚀 **科技精华**：总结本周最具前瞻性的科技突破...
-- 📅 **追番与活动**：提及本周在 ${location.primary}/${location.secondary} 准备开票的线下同人展/展览活动以及周度番剧放送日程...
-- ☕ **周末探店**：用轻松的语气推荐本周挑选的特色店面，适合周末放松小憩...
-
-Highlight:
-- That this is their personalized Weekly Report for the week of ${currentDate}.
-- Briefly touch upon the major gaming and tech trends of the week.
-- Remind them to check the dedicated "新番日历" page and upcoming events list in ${location.primary}/${location.secondary} for ticketing details.
-- Encourage them to check out the recommended shops (bookstore/cafe/bar) for weekend relaxation.
-Write around 180-220 words.
-`;
+    // Create a compact weekly editorial observation
+    const summaryPrompt = buildWeeklySummaryPrompt(currentDate, games_primary, tech_primary, stats);
 
     const summaryResponse = await openaiClient.chat.completions.create({
       model: modelName,
@@ -1002,8 +1218,16 @@ Write around 180-220 words.
 
   } catch (err) {
     console.error('[LLM Processor Weekly Error] Failed to generate weekly report via AI:', err);
-    // Ultimate fallback if LLM crashes
-    return processWeeklyReport(dailyReports, animeCalendar, bilibiliShows, shopSearchResults, preferences, location);
+    return processWeeklyReport(
+      dailyReports,
+      animeCalendar,
+      bilibiliShows,
+      shopSearchResults,
+      preferences,
+      location,
+      feedbackSummary,
+      false
+    );
   }
 }
 
@@ -1016,28 +1240,7 @@ export async function selectHighValueRss(rssItems: RssItem[]): Promise<number[]>
 
   try {
     console.log('[LLM Processor] Selecting high-value RSS items via LLM...');
-    // We map RSS items with indices so LLM can easily refer to them by index
-    const listForPrompt = rssItems.map((item, idx) => ({
-      index: idx,
-      title: item.title,
-      source: item.source,
-      category: item.category,
-      snippet: item.contentSnippet?.slice(0, 100) || ''
-    }));
-
-    const prompt = `
-You are an expert news editor. Your task is to select exactly 2 or 3 most valuable, impactful, or highly discussable gaming or tech articles from the following list.
-These selected articles will be sent to a search engine to retrieve deep background context, reviews, and community reactions.
-Do NOT select simple announcements, daily deals, or repetitive updates. Select articles that have deep analysis potential, product releases, major controversies, or insightful opinions.
-
-Articles List:
-${JSON.stringify(listForPrompt)}
-
-Output the results strictly as a JSON object containing an array of selected indices:
-{
-  "indices": [index1, index2]
-}
-`;
+    const prompt = buildDeepSearchPrompt(rssItems);
 
     const response = await secondaryOpenaiClient.chat.completions.create({
       model: secondaryModelName,

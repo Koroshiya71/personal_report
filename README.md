@@ -1,73 +1,84 @@
-# React + TypeScript + Vite
+# Personal Report
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Personal Report is a private ACG, technology, and local-life briefing dashboard. It crawls RSS feeds, Bangumi schedules, Bilibili events, and optional search results, then uses an OpenAI-compatible model to generate daily and weekly reports with editorial judgement.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Daily report: game highlights, technology highlights, local event changes, anime airing today, and optional meal suggestions.
+- Weekly report: selected weekly recap, upcoming event list, weekly anime calendar, and weekend shop suggestions.
+- Feedback loop: mark items as favorite, not interested, or "more like this"; future reports include a compact feedback summary.
+- NAS-friendly dashboard: static Vite UI served by a small Node HTTP server.
+- Protected mutation APIs: crawl, feedback, and self-update require `ADMIN_TOKEN`.
 
-## React Compiler
+## Setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Install dependencies:
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+2. Create local config:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cp config.json.example config.json
 ```
+
+3. Create `.env`:
+
+```env
+OPENAI_API_KEY=your_openai_key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+
+# Optional: cheaper/faster model for RSS deep-search candidate selection.
+OPENAI_SECONDARY_API_KEY=
+OPENAI_SECONDARY_BASE_URL=
+OPENAI_SECONDARY_MODEL=
+
+# Optional search provider. Falls back to Baidu scraping when omitted.
+TAVILY_API_KEY=
+
+# Required for dashboard mutation APIs.
+ADMIN_TOKEN=replace-with-a-long-random-token
+VITE_ADMIN_TOKEN=replace-with-the-same-token-for-private-LAN-use
+
+# Keep disabled unless this is a trusted private NAS/LAN deployment.
+ENABLE_SELF_UPDATE=false
+```
+
+## Development
+
+```bash
+npm run dev
+npm run build
+npm run lint
+npm run crawl
+npm run crawl:weekly
+```
+
+Generated report databases live under `src/data/*.json` and are intentionally ignored by Git.
+
+## Docker / NAS Deployment
+
+```bash
+docker compose up -d --build
+```
+
+The container serves the dashboard on port `8080`. Mount these local files/directories:
+
+- `config.json` for location, source, and preference settings.
+- `.env` for keys and private deployment controls.
+- `src/data` for persistent report and feedback JSON files.
+
+Mutation APIs are disabled unless `ADMIN_TOKEN` is configured:
+
+- `POST /api/crawl`
+- `POST /api/feedback`
+- `POST /api/update`
+
+Self-update also requires `ENABLE_SELF_UPDATE=true`. The update flow is conservative: it only runs on a clean `main` branch, fetches `origin/main`, requires a fast-forward update, then runs `npm install` and `npm run build`.
+
+## Report Quality Notes
+
+The LLM prompts are designed to avoid module-by-module repetition. The daily summary should read like "today's editorial judgement": 3-5 concise observations about what actually matters, while detailed anime, meal, event, and shop information remains in their own sections.

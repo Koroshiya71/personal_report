@@ -1,7 +1,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 
 const PORT = 8080;
 const HOST = '0.0.0.0';
@@ -9,12 +9,18 @@ const ROOT_DIR = process.cwd();
 const DIST_DIR = path.resolve(ROOT_DIR, 'dist');
 const DATA_DIR = path.resolve(ROOT_DIR, 'src', 'data');
 const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
+const ENABLE_SELF_UPDATE = (process.env.ENABLE_SELF_UPDATE || '').trim().toLowerCase() === 'true';
+const FEEDBACK_PATH = path.resolve(DATA_DIR, 'feedback.json');
 
 // Global state for background tasks
 let isCrawling = false;
 let isUpdating = false;
 let lastCrawlError = null;
 let lastUpdateError = null;
+let lastCrawlStartedAt = null;
+let lastCrawlFinishedAt = null;
+let lastUpdateStartedAt = null;
+let lastUpdateFinishedAt = null;
 
 const mimeTypes = {
   '.html': 'text/html',
@@ -47,7 +53,7 @@ function getHeaderValue(value) {
 }
 
 function isAuthorized(req) {
-  if (!ADMIN_TOKEN) return true;
+  if (!ADMIN_TOKEN) return false;
 
   const headerToken = getHeaderValue(req.headers['x-admin-token']).trim();
   const authorization = getHeaderValue(req.headers.authorization).trim();
@@ -64,12 +70,113 @@ function requireAdminPost(req, res) {
     return false;
   }
 
+  if (!ADMIN_TOKEN) {
+    sendJson(res, 503, {
+      success: false,
+      error: 'Mutation APIs are disabled until ADMIN_TOKEN is configured.',
+    });
+    return false;
+  }
+
   if (!isAuthorized(req)) {
     sendJson(res, 401, { success: false, error: 'Unauthorized' });
     return false;
   }
 
   return true;
+}
+
+function readJsonBody(req, maxBytes = 65536) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (Buffer.byteLength(body) > maxBytes) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      if (!body.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(new Error('Invalid JSON body'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function loadFeedback() {
+  try {
+    if (!fs.existsSync(FEEDBACK_PATH)) {
+      return { entries: [] };
+    }
+    const parsed = JSON.parse(fs.readFileSync(FEEDBACK_PATH, 'utf-8'));
+    return { entries: Array.isArray(parsed.entries) ? parsed.entries : [] };
+  } catch {
+    return { entries: [] };
+  }
+}
+
+function saveFeedback(feedback) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const entries = feedback.entries.slice(-500);
+  fs.writeFileSync(FEEDBACK_PATH, JSON.stringify({ entries }, null, 2), 'utf-8');
+}
+
+function runFile(command, args = []) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { cwd: ROOT_DIR, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function runSafeSelfUpdate() {
+  const branchResult = await runFile('git', ['branch', '--show-current']);
+  const currentBranch = branchResult.stdout.trim();
+  if (currentBranch !== 'main') {
+    throw new Error(`Self-update is only allowed on main. Current branch: ${currentBranch || 'unknown'}`);
+  }
+
+  const statusResult = await runFile('git', ['status', '--porcelain']);
+  if (statusResult.stdout.trim()) {
+    throw new Error('Working tree is not clean. Commit or discard local changes before self-update.');
+  }
+
+  await runFile('git', ['fetch', 'origin', 'main']);
+  const localResult = await runFile('git', ['rev-parse', 'HEAD']);
+  const remoteResult = await runFile('git', ['rev-parse', 'origin/main']);
+  const localHash = localResult.stdout.trim();
+  const remoteHash = remoteResult.stdout.trim();
+
+  if (localHash === remoteHash) {
+    return { upToDate: true, localHash, remoteHash };
+  }
+
+  const ancestorResult = await runFile('git', ['merge-base', '--is-ancestor', 'HEAD', 'origin/main'])
+    .then(() => true)
+    .catch(() => false);
+  if (!ancestorResult) {
+    throw new Error('Remote main is not a fast-forward from local HEAD. Manual update required.');
+  }
+
+  await runFile('git', ['merge', '--ff-only', 'origin/main']);
+  await runFile('npm', ['install']);
+  await runFile('npm', ['run', 'build']);
+
+  return { upToDate: false, localHash, remoteHash };
 }
 
 function parseRequestPath(req, res) {
@@ -138,7 +245,7 @@ function serveFile(reqPath, res) {
 }
 
 // 1. Start a simple static server to host the compiled Vite 'dist' folder
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const reqPath = parseRequestPath(req, res);
   if (!reqPath) return;
 
@@ -148,7 +255,45 @@ const server = http.createServer((req, res) => {
       updating: isUpdating,
       lastCrawlError,
       lastUpdateError,
+      lastCrawlStartedAt,
+      lastCrawlFinishedAt,
+      lastUpdateStartedAt,
+      lastUpdateFinishedAt,
+      adminTokenConfigured: Boolean(ADMIN_TOKEN),
+      selfUpdateEnabled: ENABLE_SELF_UPDATE,
     });
+    return;
+  }
+
+  if (reqPath === '/api/feedback') {
+    if (!requireAdminPost(req, res)) return;
+
+    try {
+      const body = await readJsonBody(req);
+      const type = typeof body.type === 'string' ? body.type : '';
+      const itemTitle = typeof body.itemTitle === 'string' ? body.itemTitle.trim() : '';
+      const itemCategory = typeof body.itemCategory === 'string' ? body.itemCategory.trim() : '';
+      const itemLink = typeof body.itemLink === 'string' ? body.itemLink.trim() : '';
+      const allowedTypes = new Set(['favorite', 'dislike', 'more_like_this']);
+
+      if (!allowedTypes.has(type) || !itemTitle) {
+        sendJson(res, 400, { success: false, error: 'Invalid feedback payload.' });
+        return;
+      }
+
+      const feedback = loadFeedback();
+      feedback.entries.push({
+        type,
+        itemTitle,
+        itemCategory,
+        itemLink,
+        createdAt: new Date().toISOString(),
+      });
+      saveFeedback(feedback);
+      sendJson(res, 200, { success: true, total: feedback.entries.length });
+    } catch (error) {
+      sendJson(res, 400, { success: false, error: error instanceof Error ? error.message : 'Invalid request.' });
+    }
     return;
   }
 
@@ -163,9 +308,12 @@ const server = http.createServer((req, res) => {
 
     isCrawling = true;
     lastCrawlError = null;
+    lastCrawlStartedAt = new Date().toISOString();
+    lastCrawlFinishedAt = null;
 
     exec('npm run crawl', (error, stdout, stderr) => {
       isCrawling = false;
+      lastCrawlFinishedAt = new Date().toISOString();
       if (error) {
         console.error(`[API Error] Scraper run failed: ${error.message}`);
         lastCrawlError = error.message;
@@ -184,61 +332,41 @@ const server = http.createServer((req, res) => {
     console.log(`[API] [${new Date().toLocaleString()}] System update request received.`);
     if (!requireAdminPost(req, res)) return;
 
+    if (!ENABLE_SELF_UPDATE) {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Self-update is disabled. Set ENABLE_SELF_UPDATE=true to allow /api/update.',
+      });
+      return;
+    }
+
     if (isUpdating) {
       sendJson(res, 200, { success: false, error: 'System update is already running.' });
       return;
     }
 
-    const runForcedUpdate = (httpRes) => {
-      isUpdating = true;
-      lastUpdateError = null;
-      sendJson(httpRes, 200, {
-        success: true,
-        upToDate: false,
-        message: 'Update started in the background.',
-      });
-
-      // Reset local changes to tracked files first, pull latest code, install dependencies, and rebuild the React app
-      exec('git reset --hard HEAD && git pull && npm install && npm run build', (error, stdout, stderr) => {
-        isUpdating = false;
-        if (error) {
-          console.error(`[API Error] Update failed: ${error.message}`);
-          lastUpdateError = error.message;
-          return;
-        }
-        console.log('[API Output] Update completed successfully.');
-        if (stdout) console.log(stdout);
-        if (stderr) console.warn(stderr);
-      });
-    };
-
-    // Pre-check if local branch is already up to date with remote origin main
-    exec('git fetch origin main && git rev-parse HEAD && git rev-parse origin/main', (err, stdout) => {
-      if (err) {
-        console.warn(`[API Update Warn] Pre-check failed: ${err.message}. Proceeding with forced update...`);
-        runForcedUpdate(res);
-        return;
-      }
-
-      const lines = stdout.trim().split('\n').map((line) => line.trim()).filter((line) => line.length === 40);
-      if (lines.length >= 2) {
-        const localHash = lines[lines.length - 2];
-        const remoteHash = lines[lines.length - 1];
-        console.log(`[API Update] Local version: ${localHash}, Remote version: ${remoteHash}`);
-        if (localHash === remoteHash) {
-          console.log('[API Update] Already up to date.');
-          sendJson(res, 200, {
-            success: true,
-            upToDate: true,
-            message: 'System is already up to date.',
-          });
-          return;
-        }
-      }
-
-      // Hashes differ or parse failed: proceed with update
-      runForcedUpdate(res);
+    isUpdating = true;
+    lastUpdateError = null;
+    lastUpdateStartedAt = new Date().toISOString();
+    lastUpdateFinishedAt = null;
+    sendJson(res, 200, {
+      success: true,
+      upToDate: false,
+      message: 'Safe self-update started in the background.',
     });
+
+    runSafeSelfUpdate()
+      .then((result) => {
+        console.log(result.upToDate ? '[API Update] Already up to date.' : '[API Update] Update completed successfully.');
+      })
+      .catch((error) => {
+        console.error(`[API Error] Update failed: ${error.message}`);
+        lastUpdateError = error.message;
+      })
+      .finally(() => {
+        isUpdating = false;
+        lastUpdateFinishedAt = new Date().toISOString();
+      });
     return;
   }
 
@@ -249,6 +377,11 @@ server.listen(PORT, HOST, () => {
   console.log(`[Server] Dashboard is running at http://${HOST}:${PORT}`);
   if (ADMIN_TOKEN) {
     console.log('[Server] Admin token protection is enabled for mutation APIs.');
+  } else {
+    console.warn('[Server] ADMIN_TOKEN is not configured. Mutation APIs are disabled.');
+  }
+  if (ENABLE_SELF_UPDATE) {
+    console.log('[Server] Safe self-update is enabled.');
   }
 });
 
@@ -260,8 +393,11 @@ function runCrawler() {
   }
   console.log(`[Scheduler] [${new Date().toLocaleString()}] Starting crawl...`);
   isCrawling = true;
+  lastCrawlStartedAt = new Date().toISOString();
+  lastCrawlFinishedAt = null;
   exec('npm run crawl', (error, stdout, stderr) => {
     isCrawling = false;
+    lastCrawlFinishedAt = new Date().toISOString();
     if (error) {
       console.error(`[Scheduler Error] Scraper run failed: ${error.message}`);
       lastCrawlError = error.message;

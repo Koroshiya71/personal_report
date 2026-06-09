@@ -7,7 +7,12 @@ interface SearchResult {
   content: string;
 }
 
-export async function searchTavily(query: string, apiKey: string): Promise<SearchResult[]> {
+interface SearchOptions {
+  searchDepth?: 'basic' | 'advanced';
+  maxResults?: number;
+}
+
+export async function searchTavily(query: string, apiKey: string, options: SearchOptions = {}): Promise<SearchResult[]> {
   try {
     console.log(`[Search - Tavily] Querying: "${query}"`);
     const response = await axios.post(
@@ -15,8 +20,8 @@ export async function searchTavily(query: string, apiKey: string): Promise<Searc
       {
         api_key: apiKey,
         query: query,
-        search_depth: 'basic',
-        max_results: 5
+        search_depth: options.searchDepth || 'basic',
+        max_results: options.maxResults || 5
       },
       {
         timeout: 10000
@@ -81,9 +86,9 @@ export async function searchBaidu(query: string): Promise<SearchResult[]> {
 }
 
 // Master search function that auto-selects based on availability of Tavily API Key
-export async function performSearch(query: string, tavilyApiKey?: string): Promise<SearchResult[]> {
+export async function performSearch(query: string, tavilyApiKey?: string, options: SearchOptions = {}): Promise<SearchResult[]> {
   if (tavilyApiKey && tavilyApiKey.trim() !== '') {
-    return searchTavily(query, tavilyApiKey);
+    return searchTavily(query, tavilyApiKey, options);
   } else {
     return searchBaidu(query);
   }
