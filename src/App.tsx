@@ -418,11 +418,15 @@ function App() {
             setUpdating(true);
           } else {
             if (wasUpdating.current) {
-              showToast('系统更新并编译完成！正在重新载入页面加载新版本。', 'success');
               wasUpdating.current = false;
               setUpdating(false);
               updateStartTimeout.current = 0;
-              window.location.reload();
+              if (data.lastUpdateUpToDate === true) {
+                showToast('当前已经是最新版本，无需重新载入。', 'success');
+              } else {
+                showToast('系统更新并编译完成！正在重新载入页面加载新版本。', 'success');
+                window.location.reload();
+              }
             } else {
               setUpdating((prev) => {
                 if (prev) {

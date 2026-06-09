@@ -21,6 +21,7 @@ let lastCrawlStartedAt = null;
 let lastCrawlFinishedAt = null;
 let lastUpdateStartedAt = null;
 let lastUpdateFinishedAt = null;
+let lastUpdateUpToDate = null;
 
 const mimeTypes = {
   '.html': 'text/html',
@@ -259,6 +260,7 @@ const server = http.createServer(async (req, res) => {
       lastCrawlFinishedAt,
       lastUpdateStartedAt,
       lastUpdateFinishedAt,
+      lastUpdateUpToDate,
       adminTokenConfigured: Boolean(ADMIN_TOKEN),
       selfUpdateEnabled: ENABLE_SELF_UPDATE,
     });
@@ -349,6 +351,7 @@ const server = http.createServer(async (req, res) => {
     lastUpdateError = null;
     lastUpdateStartedAt = new Date().toISOString();
     lastUpdateFinishedAt = null;
+    lastUpdateUpToDate = null;
     sendJson(res, 200, {
       success: true,
       upToDate: false,
@@ -357,6 +360,7 @@ const server = http.createServer(async (req, res) => {
 
     runSafeSelfUpdate()
       .then((result) => {
+        lastUpdateUpToDate = result.upToDate;
         console.log(result.upToDate ? '[API Update] Already up to date.' : '[API Update] Update completed successfully.');
         if (!result.upToDate) {
           console.log('[API Update] Restarting server process to load updated backend and static assets.');
