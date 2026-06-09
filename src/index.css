@@ -372,6 +372,36 @@ body {
   cursor: not-allowed;
 }
 
+.admin-token-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.admin-token-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.admin-token-btn.configured {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.admin-token-warning {
+  color: #fbbf24;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 /* Report Area Scroll */
 .report-area {
   flex: 1;

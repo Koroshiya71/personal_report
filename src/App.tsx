@@ -106,9 +106,16 @@ const getTodayWeekday = () => {
 };
 
 const todayWeekday = getTodayWeekday();
-const adminToken = (import.meta.env.VITE_ADMIN_TOKEN || '').trim();
-const getAdminHeaders = (): HeadersInit | undefined => {
-  return adminToken ? { 'X-Admin-Token': adminToken } : undefined;
+const ADMIN_TOKEN_STORAGE_KEY = 'personal_report_admin_token';
+const getInitialAdminToken = () => {
+  return (
+    localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ||
+    (import.meta.env.VITE_ADMIN_TOKEN || '')
+  ).trim();
+};
+
+const getAdminHeaders = (token: string): HeadersInit | undefined => {
+  return token ? { 'X-Admin-Token': token, Authorization: `Bearer ${token}` } : undefined;
 };
 
 const isConfirmedAddress = (address?: string) => {
@@ -137,6 +144,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [expandedMonths, setExpandedMonths] = useState<{ [key: string]: boolean }>({});
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
+  const [adminToken, setAdminToken] = useState(getInitialAdminToken);
+  const [serverAdminTokenConfigured, setServerAdminTokenConfigured] = useState<boolean | null>(null);
+  const [selfUpdateEnabled, setSelfUpdateEnabled] = useState<boolean | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -144,6 +154,36 @@ function App() {
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
+  };
+
+  const saveAdminToken = (nextToken: string) => {
+    const trimmedToken = nextToken.trim();
+    if (trimmedToken) {
+      localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, trimmedToken);
+    } else {
+      localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    }
+    setAdminToken(trimmedToken);
+  };
+
+  const handleAdminTokenSettings = () => {
+    const nextToken = window.prompt('请输入 NAS 上配置的 ADMIN_TOKEN；留空并确认可清除本机保存的口令。', adminToken);
+    if (nextToken === null) return;
+
+    saveAdminToken(nextToken);
+    showToast(nextToken.trim() ? '管理口令已保存到当前浏览器。' : '已清除当前浏览器保存的管理口令。', 'success');
+  };
+
+  const showAdminTokenHint = (status?: number, error?: string) => {
+    if (status === 401) {
+      showToast('管理口令不正确或尚未设置，请点击“管理口令”更新后再试。', 'error');
+      return;
+    }
+    if (status === 503 || error?.includes('ADMIN_TOKEN')) {
+      showToast('NAS 服务端还没有配置 ADMIN_TOKEN；请先在部署环境变量中配置并重启容器。', 'error');
+      return;
+    }
+    showToast(error || '接口调用失败，请检查 NAS 服务状态。', 'error');
   };
 
   const sendFeedback = async (
@@ -157,13 +197,13 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(getAdminHeaders() || {}),
+          ...(getAdminHeaders(adminToken) || {}),
         },
         body: JSON.stringify({ type, itemTitle, itemCategory, itemLink }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
-        showToast(data.error || '反馈保存失败，请确认 ADMIN_TOKEN 已配置。', 'error');
+        showAdminTokenHint(res.status, data.error || '反馈保存失败，请确认 ADMIN_TOKEN 已配置。');
         return;
       }
       const label = type === 'favorite' ? '已收藏' : type === 'dislike' ? '已标记不感兴趣' : '会参考这个方向推荐更多';
@@ -266,7 +306,7 @@ function App() {
   const handleCrawl = async () => {
     setCrawling(true);
     try {
-      const res = await fetch('/api/crawl', { method: 'POST', headers: getAdminHeaders() });
+      const res = await fetch('/api/crawl', { method: 'POST', headers: getAdminHeaders(adminToken) });
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -276,7 +316,8 @@ function App() {
           setCrawling(false);
         }
       } else {
-        showToast('接口调用失败。请确认服务运行于 Docker/NAS 环境中。如果是在本地调试，请在命令行中手动执行 npm run crawl。', 'error');
+        const data = await res.json().catch(() => ({}));
+        showAdminTokenHint(res.status, data.error || '接口调用失败。请确认服务运行于 Docker/NAS 环境中。如果是在本地调试，请在命令行中手动执行 npm run crawl。');
         setCrawling(false);
       }
     } catch {
@@ -291,7 +332,7 @@ function App() {
     }
     setUpdating(true);
     try {
-      const res = await fetch('/api/update', { method: 'POST', headers: getAdminHeaders() });
+      const res = await fetch('/api/update', { method: 'POST', headers: getAdminHeaders(adminToken) });
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -306,7 +347,8 @@ function App() {
           setUpdating(false);
         }
       } else {
-        showToast('接口调用失败。请确认服务运行于 Docker/NAS 环境中。', 'error');
+        const data = await res.json().catch(() => ({}));
+        showAdminTokenHint(res.status, data.error || '接口调用失败。请确认服务运行于 Docker/NAS 环境中。');
         setUpdating(false);
       }
     } catch {
@@ -331,6 +373,12 @@ function App() {
         const res = await fetch('/api/status');
         if (res.ok) {
           const data = await res.json();
+          if (typeof data.adminTokenConfigured === 'boolean') {
+            setServerAdminTokenConfigured(data.adminTokenConfigured);
+          }
+          if (typeof data.selfUpdateEnabled === 'boolean') {
+            setSelfUpdateEnabled(data.selfUpdateEnabled);
+          }
 
           if (data.crawling) {
             wasCrawling.current = true;
@@ -407,6 +455,12 @@ function App() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) {
+          if (typeof data.adminTokenConfigured === 'boolean') {
+            setServerAdminTokenConfigured(data.adminTokenConfigured);
+          }
+          if (typeof data.selfUpdateEnabled === 'boolean') {
+            setSelfUpdateEnabled(data.selfUpdateEnabled);
+          }
           if (data.crawling) wasCrawling.current = true;
           if (data.updating) wasUpdating.current = true;
           setCrawling(data.crawling);
@@ -639,6 +693,26 @@ function App() {
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
               数据定时在每天 09:00 更新
             </span>
+            <button
+              className={`admin-token-btn ${adminToken ? 'configured' : ''}`}
+              type="button"
+              onClick={handleAdminTokenSettings}
+              title={
+                serverAdminTokenConfigured === false
+                  ? '服务端未配置 ADMIN_TOKEN'
+                  : adminToken
+                    ? '当前浏览器已保存管理口令'
+                    : '设置管理口令'
+              }
+            >
+              {adminToken ? '🔐 管理口令' : '🔓 设置口令'}
+            </button>
+            {serverAdminTokenConfigured === false && (
+              <span className="admin-token-warning">服务端未配置</span>
+            )}
+            {serverAdminTokenConfigured && selfUpdateEnabled === false && (
+              <span className="admin-token-warning">更新未启用</span>
+            )}
             <button 
               className={`refresh-btn crawl-btn ${crawling ? 'loading' : ''}`} 
               onClick={handleCrawl}
