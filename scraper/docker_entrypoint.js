@@ -268,6 +268,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (reqPath === '/api/feedback') {
+    if (req.method === 'GET') {
+      if (!isAuthorized(req)) {
+        sendJson(res, ADMIN_TOKEN ? 401 : 503, {
+          success: false,
+          error: ADMIN_TOKEN ? 'Unauthorized' : 'Mutation APIs are disabled until ADMIN_TOKEN is configured.',
+        });
+        return;
+      }
+
+      const feedback = loadFeedback();
+      sendJson(res, 200, { success: true, entries: feedback.entries.slice().reverse() });
+      return;
+    }
+
     if (!requireAdminPost(req, res)) return;
 
     try {
@@ -276,7 +290,7 @@ const server = http.createServer(async (req, res) => {
       const itemTitle = typeof body.itemTitle === 'string' ? body.itemTitle.trim() : '';
       const itemCategory = typeof body.itemCategory === 'string' ? body.itemCategory.trim() : '';
       const itemLink = typeof body.itemLink === 'string' ? body.itemLink.trim() : '';
-      const allowedTypes = new Set(['favorite', 'dislike', 'more_like_this']);
+      const allowedTypes = new Set(['favorite', 'dislike', 'more_like_this', 'read_later']);
 
       if (!allowedTypes.has(type) || !itemTitle) {
         sendJson(res, 400, { success: false, error: 'Invalid feedback payload.' });

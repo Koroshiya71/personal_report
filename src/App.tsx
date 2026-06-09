@@ -63,7 +63,16 @@ interface MealRecommendation {
   confidence?: 'high' | 'medium' | 'low';
 }
 
-type FeedbackType = 'favorite' | 'dislike' | 'more_like_this';
+type ViewTab = 'daily' | 'weekly' | 'anime' | 'favorites' | 'read_later';
+type FeedbackType = 'favorite' | 'dislike' | 'more_like_this' | 'read_later';
+
+interface FeedbackEntry {
+  type: FeedbackType;
+  itemTitle: string;
+  itemCategory: string;
+  itemLink?: string;
+  createdAt: string;
+}
 
 interface DailyReport {
   date: string;
@@ -129,7 +138,7 @@ const confidenceLabel = (confidence?: 'high' | 'medium' | 'low') => {
 };
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'daily' | 'weekly' | 'anime'>('daily');
+  const [activeTab, setActiveTab] = useState<ViewTab>('daily');
   const [dailyReports, setDailyReports] = useState<{ [date: string]: DailyReport }>({});
   const [weeklyReports, setWeeklyReports] = useState<{ [date: string]: WeeklyReport }>({});
   const [animeCalendar, setAnimeCalendar] = useState<AnimeItem[]>([]);
@@ -147,6 +156,7 @@ function App() {
   const [adminToken, setAdminToken] = useState(getInitialAdminToken);
   const [serverAdminTokenConfigured, setServerAdminTokenConfigured] = useState<boolean | null>(null);
   const [selfUpdateEnabled, setSelfUpdateEnabled] = useState<boolean | null>(null);
+  const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -186,6 +196,28 @@ function App() {
     showToast(error || '接口调用失败，请检查 NAS 服务状态。', 'error');
   };
 
+  const loadFeedbackEntries = async () => {
+    if (!adminToken) {
+      setFeedbackEntries([]);
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/feedback', {
+        headers: getAdminHeaders(adminToken),
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showAdminTokenHint(res.status, data.error || '读取收藏数据失败。');
+        return;
+      }
+      setFeedbackEntries(Array.isArray(data.entries) ? data.entries : []);
+    } catch {
+      showToast('连接收藏数据接口失败。', 'error');
+    }
+  };
+
   const sendFeedback = async (
     type: FeedbackType,
     itemTitle: string,
@@ -206,7 +238,16 @@ function App() {
         showAdminTokenHint(res.status, data.error || '反馈保存失败，请确认 ADMIN_TOKEN 已配置。');
         return;
       }
-      const label = type === 'favorite' ? '已收藏' : type === 'dislike' ? '已标记不感兴趣' : '会参考这个方向推荐更多';
+      if (type === 'favorite' || type === 'read_later') {
+        loadFeedbackEntries();
+      }
+      const label = type === 'favorite'
+        ? '已收藏'
+        : type === 'read_later'
+          ? '已加入稍后再读'
+          : type === 'dislike'
+            ? '已标记不感兴趣'
+            : '会参考这个方向推荐更多';
       showToast(label, 'success');
     } catch {
       showToast('连接反馈接口失败。', 'error');
@@ -224,6 +265,7 @@ function App() {
   }) => (
     <div className="feedback-controls" onClick={(event) => event.preventDefault()}>
       <button type="button" title="收藏" onClick={() => sendFeedback('favorite', title, category, link)}>收藏</button>
+      <button type="button" title="稍后再读" onClick={() => sendFeedback('read_later', title, category, link)}>稍后读</button>
       <button type="button" title="不感兴趣" onClick={() => sendFeedback('dislike', title, category, link)}>不感兴趣</button>
       <button type="button" title="类似内容更多" onClick={() => sendFeedback('more_like_this', title, category, link)}>类似更多</button>
     </div>
@@ -368,6 +410,14 @@ function App() {
     loadData(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadFeedbackEntries();
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken]);
 
   // Poll task status in the background
   useEffect(() => {
@@ -550,9 +600,107 @@ function App() {
 
   // todayWeekday is defined globally
 
-  const handleTabChange = (tab: 'daily' | 'weekly' | 'anime') => {
+  const getSavedFeedbackItems = (type: 'favorite' | 'read_later') => {
+    const seen = new Set<string>();
+    return feedbackEntries.filter((entry) => {
+      if (entry.type !== type || !entry.itemTitle) return false;
+      const key = `${entry.itemCategory}:${entry.itemTitle}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const formatSavedTime = (value: string) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const categoryLabel = (category: string) => {
+    if (category.includes('game')) return '游戏';
+    if (category.includes('tech')) return '科技';
+    if (category.includes('event')) return '活动';
+    if (category.includes('shop')) return '探店';
+    if (category.includes('meal')) return '就餐';
+    return category || '内容';
+  };
+
+  const renderSavedFeedbackPage = (type: 'favorite' | 'read_later') => {
+    const items = getSavedFeedbackItems(type);
+    const title = type === 'favorite' ? '收藏夹' : '稍后再读';
+    const description = type === 'favorite'
+      ? '这里收纳你明确觉得值得保留的内容。'
+      : '这里放适合之后细读、回头处理的内容。';
+
+    return (
+      <div className="report-wrapper">
+        <div className="saved-page-header">
+          <div>
+            <h2>{title}</h2>
+            <p>{description}</p>
+          </div>
+          <button className="refresh-btn" type="button" onClick={loadFeedbackEntries}>
+            刷新列表
+          </button>
+        </div>
+
+        {items.length > 0 ? (
+          <div className="saved-items-grid">
+            {items.map((item, index) => {
+              const content = (
+                <>
+                  <div className="saved-item-meta">
+                    <span>{categoryLabel(item.itemCategory)}</span>
+                    <span>{formatSavedTime(item.createdAt)}</span>
+                  </div>
+                  <h3>{item.itemTitle}</h3>
+                  <div className="saved-item-footer">
+                    <span>{item.itemLink ? '打开原文' : '暂无链接'}</span>
+                    {item.itemLink && <span>→</span>}
+                  </div>
+                </>
+              );
+
+              return item.itemLink ? (
+                <a
+                  className="saved-item-card"
+                  href={item.itemLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  key={`${item.itemCategory}-${item.itemTitle}-${index}`}
+                >
+                  {content}
+                </a>
+              ) : (
+                <div className="saved-item-card" key={`${item.itemCategory}-${item.itemTitle}-${index}`}>
+                  {content}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-state saved-empty-state">
+            <span className="empty-icon">{type === 'favorite' ? '⭐' : '🕒'}</span>
+            <span>{type === 'favorite' ? '还没有收藏内容' : '还没有稍后再读内容'}</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const handleTabChange = (tab: ViewTab) => {
     setActiveTab(tab);
-    if (tab === 'anime') {
+    if (tab === 'anime' || tab === 'favorites' || tab === 'read_later') {
+      if (tab === 'favorites' || tab === 'read_later') {
+        loadFeedbackEntries();
+      }
       return;
     }
     const reports = tab === 'daily' ? dailyReports : weeklyReports;
@@ -567,9 +715,11 @@ function App() {
     }
   };
 
-  const datesToRender = activeTab === 'weekly' 
-    ? Object.keys(weeklyReports).sort().reverse() 
-    : Object.keys(dailyReports).sort().reverse();
+  const datesToRender = activeTab === 'weekly'
+    ? Object.keys(weeklyReports).sort().reverse()
+    : activeTab === 'daily'
+      ? Object.keys(dailyReports).sort().reverse()
+      : [];
 
   return (
     <div className="dashboard-container">
@@ -582,7 +732,27 @@ function App() {
           </div>
         </div>
         <div className="sidebar-scroll">
-          {activeTab === 'anime' ? (
+          {activeTab === 'favorites' || activeTab === 'read_later' ? (
+            <div className="saved-sidebar-content">
+              <div className="section-label">{activeTab === 'favorites' ? '收藏统计' : '待读统计'}</div>
+              <div className="anime-sidebar-stats-card">
+                <h4>{activeTab === 'favorites' ? '收藏夹' : '稍后再读'}</h4>
+                <div className="stats-row">
+                  <span>当前条目</span>
+                  <strong>{getSavedFeedbackItems(activeTab === 'favorites' ? 'favorite' : 'read_later').length} 条</strong>
+                </div>
+                <div className="stats-row">
+                  <span>反馈总数</span>
+                  <strong>{feedbackEntries.length} 条</strong>
+                </div>
+              </div>
+              {!adminToken && (
+                <div style={{ padding: '0 8px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                  设置管理口令后可读取收藏数据
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'anime' ? (
             <div className="anime-sidebar-content">
               <div className="section-label">放送周期日程</div>
               <div className="anime-sidebar-days">
@@ -696,6 +866,18 @@ function App() {
             >
               新番日历
             </button>
+            <button
+              className={`view-btn ${activeTab === 'favorites' ? 'active' : ''}`}
+              onClick={() => handleTabChange('favorites')}
+            >
+              收藏夹
+            </button>
+            <button
+              className={`view-btn ${activeTab === 'read_later' ? 'active' : ''}`}
+              onClick={() => handleTabChange('read_later')}
+            >
+              稍后再读
+            </button>
           </div>
           
           <div className="refresh-container">
@@ -753,7 +935,11 @@ function App() {
           </div>
         ) : (
           <div className="report-area">
-            {activeTab === 'daily' && activeDailyReport ? (
+            {activeTab === 'favorites' ? (
+              renderSavedFeedbackPage('favorite')
+            ) : activeTab === 'read_later' ? (
+              renderSavedFeedbackPage('read_later')
+            ) : activeTab === 'daily' && activeDailyReport ? (
               <div className="report-wrapper">
                 {/* TL;DR Today Summary */}
                 <div className="tldr-card">
@@ -1340,12 +1526,12 @@ function App() {
             ) : (
               <div className="empty-state">
                 <span className="empty-icon">📁</span>
-                <h3>未找到选定日期的 {activeTab === 'daily' ? '日报' : '周报'}</h3>
+                <h3>未找到选定日期的 {activeTab === 'daily' ? '日报' : activeTab === 'weekly' ? '周报' : '内容'}</h3>
                 <p style={{ maxWidth: '400px', margin: '8px auto', fontSize: '14px' }}>
                   请确保爬虫已运行并生成了数据。您可以在终端运行以下命令来生成报告：
                 </p>
                 <code style={{ marginTop: '12px', fontSize: '13px' }}>
-                  npm run {activeTab === 'daily' ? 'crawl' : 'crawl:weekly'}
+                  npm run {activeTab === 'daily' ? 'crawl' : activeTab === 'weekly' ? 'crawl:weekly' : 'crawl'}
                 </code>
               </div>
             )}

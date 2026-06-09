@@ -19,7 +19,7 @@ const weeklyPath = path.join(reportDir, 'weekly.json');
 const feedbackPath = path.join(reportDir, 'feedback.json');
 
 interface FeedbackEntry {
-  type: 'favorite' | 'dislike' | 'more_like_this';
+  type: 'favorite' | 'dislike' | 'more_like_this' | 'read_later';
   itemTitle: string;
   itemCategory?: string;
   createdAt: string;
