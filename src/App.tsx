@@ -209,6 +209,10 @@ function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
+        if (res.status === 405) {
+          showToast('当前后端还不支持读取收藏夹，请重启容器或更新到最新版本后刷新页面。', 'error');
+          return;
+        }
         showAdminTokenHint(res.status, data.error || '读取收藏数据失败。');
         return;
       }

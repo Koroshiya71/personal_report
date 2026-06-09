@@ -8,6 +8,7 @@
     "build": "tsc -b && tsc -p tsconfig.scraper.json --noEmit && vite build",
     "typecheck:scraper": "tsc -p tsconfig.scraper.json --noEmit",
     "lint": "eslint .",
+    "test:smoke": "node scripts/smoke_check.mjs",
     "preview": "vite preview",
     "crawl": "tsx scraper/index.ts",
     "crawl:weekly": "tsx scraper/index.ts --weekly"

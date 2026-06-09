@@ -41,7 +41,6 @@ TAVILY_API_KEY=
 
 # Required for dashboard mutation APIs.
 ADMIN_TOKEN=replace-with-a-long-random-token
-VITE_ADMIN_TOKEN=replace-with-the-same-token-for-private-LAN-use
 
 # Keep disabled unless this is a trusted private NAS/LAN deployment.
 ENABLE_SELF_UPDATE=false
@@ -53,9 +52,12 @@ ENABLE_SELF_UPDATE=false
 npm run dev
 npm run build
 npm run lint
+npm run test:smoke
 npm run crawl
 npm run crawl:weekly
 ```
+
+Use the dashboard's "管理口令" button to save `ADMIN_TOKEN` in the current browser for crawl, update, and feedback actions.
 
 Generated report databases live under `src/data/*.json` and are intentionally ignored by Git.
 
