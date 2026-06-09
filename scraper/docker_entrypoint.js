@@ -174,7 +174,7 @@ async function runSafeSelfUpdate() {
   }
 
   await runFile('git', ['merge', '--ff-only', 'origin/main']);
-  await runFile('npm', ['install']);
+  await runFile('npm', ['ci']);
   await runFile('npm', ['run', 'build']);
 
   return { upToDate: false, localHash, remoteHash };

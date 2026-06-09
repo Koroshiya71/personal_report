@@ -77,7 +77,7 @@ Mutation APIs are disabled unless `ADMIN_TOKEN` is configured:
 - `POST /api/feedback`
 - `POST /api/update`
 
-Self-update also requires `ENABLE_SELF_UPDATE=true`. The update flow is conservative: it only runs on a clean `main` branch, fetches `origin/main`, requires a fast-forward update, then runs `npm install` and `npm run build`.
+Self-update also requires `ENABLE_SELF_UPDATE=true`. The update flow is conservative: it only runs on a clean `main` branch, fetches `origin/main`, requires a fast-forward update, then runs `npm ci` and `npm run build`.
 
 ## Report Quality Notes
 
