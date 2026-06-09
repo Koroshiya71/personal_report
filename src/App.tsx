@@ -255,9 +255,10 @@ function App() {
     if (showLoading) setLoading(true);
     let loadedDaily: { [date: string]: DailyReport } = {};
     let loadedWeekly: { [date: string]: WeeklyReport } = {};
+    const cacheBust = `?t=${Date.now()}`;
 
     try {
-      const dailyRes = await fetch('/src/data/reports.json');
+      const dailyRes = await fetch(`/src/data/reports.json${cacheBust}`, { cache: 'no-store' });
       if (dailyRes.ok) {
         const data = await dailyRes.json();
         setDailyReports(data);
@@ -268,7 +269,7 @@ function App() {
     }
 
     try {
-      const weeklyRes = await fetch('/src/data/weekly.json');
+      const weeklyRes = await fetch(`/src/data/weekly.json${cacheBust}`, { cache: 'no-store' });
       if (weeklyRes.ok) {
         const data = await weeklyRes.json();
         setWeeklyReports(data);
@@ -279,7 +280,7 @@ function App() {
     }
 
     try {
-      const animeRes = await fetch('/src/data/anime_calendar.json');
+      const animeRes = await fetch(`/src/data/anime_calendar.json${cacheBust}`, { cache: 'no-store' });
       if (animeRes.ok) {
         const data = await animeRes.json();
         setAnimeCalendar(data);
@@ -310,6 +311,8 @@ function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
+          wasCrawling.current = true;
+          crawlStartTimeout.current = 0;
           showToast('数据抓取任务已在后台启动！看板将在生成完成后自动刷新。', 'info');
         } else {
           showToast('启动失败: ' + (data.error || '未知错误'), 'error');
@@ -340,6 +343,8 @@ function App() {
             showToast('当前已是最新版本，无需更新！', 'success');
             setUpdating(false);
           } else {
+            wasUpdating.current = true;
+            updateStartTimeout.current = 0;
             showToast('检测到新版本，更新已在后台启动！编译完成后页面将自动重新载入。', 'info');
           }
         } else {
