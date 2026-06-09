@@ -144,12 +144,31 @@ function runFile(command, args = []) {
   });
 }
 
+function getDirtyPaths(statusOutput) {
+  return statusOutput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.slice(3).replace(/^"|"$/g, ''));
+}
+
+async function restoreGeneratedLockfileIfSafe() {
+  const statusResult = await runFile('git', ['status', '--porcelain']);
+  const dirtyPaths = getDirtyPaths(statusResult.stdout);
+  if (dirtyPaths.length === 1 && dirtyPaths[0] === 'package-lock.json') {
+    console.warn('[API Update] package-lock.json has local generated changes. Restoring it before self-update.');
+    await runFile('git', ['restore', '--', 'package-lock.json']);
+  }
+}
+
 async function runSafeSelfUpdate() {
   const branchResult = await runFile('git', ['branch', '--show-current']);
   const currentBranch = branchResult.stdout.trim();
   if (currentBranch !== 'main') {
     throw new Error(`Self-update is only allowed on main. Current branch: ${currentBranch || 'unknown'}`);
   }
+
+  await restoreGeneratedLockfileIfSafe();
 
   const statusResult = await runFile('git', ['status', '--porcelain']);
   if (statusResult.stdout.trim()) {
