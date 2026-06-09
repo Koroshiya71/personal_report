@@ -358,6 +358,13 @@ const server = http.createServer(async (req, res) => {
     runSafeSelfUpdate()
       .then((result) => {
         console.log(result.upToDate ? '[API Update] Already up to date.' : '[API Update] Update completed successfully.');
+        if (!result.upToDate) {
+          console.log('[API Update] Restarting server process to load updated backend and static assets.');
+          setTimeout(() => {
+            server.close(() => process.exit(0));
+            setTimeout(() => process.exit(0), 3000);
+          }, 1000);
+        }
       })
       .catch((error) => {
         console.error(`[API Error] Update failed: ${error.message}`);
