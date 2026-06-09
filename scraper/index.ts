@@ -5,7 +5,8 @@ import { parseRssFeeds } from './parser_rss';
 import { fetchBilibiliShows } from './parser_bilibili';
 import { fetchBangumiCalendar } from './parser_bangumi';
 import { performSearch } from './search';
-import { processReport, processWeeklyReport, FinalReport, WeeklyReport, selectHighValueRss, ActivityItem, SearchResult, getShanghaiWeekday } from './llm_processor';
+import { processReport, processWeeklyReport, selectHighValueRss, getShanghaiWeekday } from './llm_processor';
+import type { FinalReport, WeeklyReport, ActivityItem, SearchResult } from './llm_processor';
 
 dotenv.config();
 
@@ -216,6 +217,21 @@ async function runCrawler() {
       console.error('[Search - Strategy C Error] Failed to deepen RSS items:', e);
     }
 
+    // --- Step 5b: Daily Meal Recommendation Search (大众点评 focus & Weather) ---
+    console.log('\n--- Step 5b: Performing Daily Meal Recommendation Searches ---');
+    const diningCenter = location.dining_center || '深圳市福田区景田北';
+    const diningQueries = [
+      `${location.primary} 福田区 今天天气`,
+      `site:dianping.com ${diningCenter} 简餐 外卖 推荐`,
+      `site:dianping.com ${diningCenter} 一个人吃 美食`
+    ];
+    console.log(`[Search - Dining] Launching ${diningQueries.length} parallel dining/weather searches...`);
+    const diningSearchPromises = diningQueries.map(q => performSearch(q, tavilyKey));
+    const diningSearchResponses = await Promise.all(diningSearchPromises);
+    const weatherSearchResults = diningSearchResponses[0];
+    const foodSearchResults = [...diningSearchResponses[1], ...diningSearchResponses[2]];
+    console.log(`[Search - Dining] Collected ${weatherSearchResults.length} weather results and ${foodSearchResults.length} Jingtian North food search results.`);
+
     // 7. Process Daily Report with AI
     console.log('\n--- Step 6: Processing & Summarizing Daily Report with AI ---');
     const dailyReport: FinalReport = await processReport(
@@ -225,7 +241,9 @@ async function runCrawler() {
       shopSearchResults,
       eventSearchResults,
       preferences,
-      location
+      location,
+      weatherSearchResults,
+      foodSearchResults
     );
 
     // Save Daily Report
@@ -271,9 +289,10 @@ async function runCrawler() {
       );
 
       // Strip the large anime_calendar from the weekly report database to save space
-      delete (weeklyReport as any).anime_calendar;
+      const { anime_calendar, ...weeklyReportForStorage } = weeklyReport;
+      void anime_calendar;
 
-      existingWeekly[weeklyReport.date] = weeklyReport;
+      existingWeekly[weeklyReport.date] = weeklyReportForStorage;
       fs.writeFileSync(weeklyPath, JSON.stringify(existingWeekly, null, 2), 'utf-8');
       console.log(`Successfully compiled and wrote weekly report to: ${weeklyPath}`);
     }

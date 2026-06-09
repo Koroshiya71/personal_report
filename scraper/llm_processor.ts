@@ -89,6 +89,10 @@ export interface Preferences {
   shops: {
     categories: string[];
   };
+  dining?: {
+    scenarios: string[];
+    categories: string[];
+  };
 }
 
 export interface Location {
@@ -96,6 +100,76 @@ export interface Location {
   secondary: string;
   primary_code: string;
   secondary_code: string;
+  dining_center?: string;
+}
+
+type DeliveryType = "支持外卖" | "仅限堂食" | "外卖/堂食皆可";
+
+interface MealRecommendation {
+  name: string;
+  cuisine: string;
+  price_range: string;
+  suitability_index: string;
+  reason: string;
+  address?: string;
+  delivery_type: DeliveryType;
+}
+
+interface ShopRecommendation {
+  name: string;
+  city: string;
+  category: string;
+  address: string;
+  description: string;
+  link?: string;
+}
+
+interface PrimarySelection {
+  title: string;
+  description: string;
+  source: string;
+  editor_comment: string;
+}
+
+interface SecondarySelection {
+  title: string;
+  source: string;
+}
+
+interface ParsedNewsResponse {
+  games_primary?: PrimarySelection[];
+  games_secondary?: SecondarySelection[];
+  tech_primary?: PrimarySelection[];
+  tech_secondary?: SecondarySelection[];
+}
+
+interface ParsedSearchResponse {
+  shops?: ShopRecommendation[];
+  extra_events?: Array<{
+    title: string;
+    venue?: string;
+    time?: string;
+    price?: string;
+    city?: string;
+    link?: string;
+    source?: string;
+  }>;
+  meals?: MealRecommendation[];
+}
+
+interface ParsedWeeklyResponse {
+  best_games_primary?: PrimarySelection[];
+  best_games_secondary?: SecondarySelection[];
+  best_tech_primary?: PrimarySelection[];
+  best_tech_secondary?: SecondarySelection[];
+  shops?: ShopRecommendation[];
+  stats?: {
+    fun_insight?: string;
+  };
+}
+
+interface ParsedIndicesResponse {
+  indices?: number[];
 }
 
 export interface FinalReport {
@@ -127,14 +201,8 @@ export interface FinalReport {
   }>;
   anime: AnimeItem[];
   events: ActivityItem[];
-  shops: Array<{
-    name: string;
-    city: string;
-    category: string;
-    address: string;
-    description: string;
-    link?: string;
-  }>;
+  shops: ShopRecommendation[];
+  meals?: MealRecommendation[];
 }
 
 export interface WeeklyReport {
@@ -164,16 +232,9 @@ export interface WeeklyReport {
     link: string;
     source: string;
   }>;
-  anime_calendar: AnimeItem[];
+  anime_calendar?: AnimeItem[];
   events: ActivityItem[];
-  shops: Array<{
-    name: string;
-    city: string;
-    category: string;
-    address: string;
-    description: string;
-    link?: string;
-  }>;
+  shops: ShopRecommendation[];
   stats?: {
     total_articles: number;
     games_count: number;
@@ -246,10 +307,10 @@ function isDateValidForDailyReport(timeStr: string, currentDateStr: string): boo
   return true;
 }
 
-function parseCleanJson(text: string) {
+function parseCleanJson<T>(text: string): T {
   try {
     const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(clean);
+    return JSON.parse(clean) as T;
   } catch (e) {
     console.error('[JSON Parse Error] Failed to parse LLM response:', text);
     throw e;
@@ -269,7 +330,6 @@ export function getShanghaiDateString(date = new Date()): string {
   const day = parts.find(p => p.type === 'day')!.value;
   return `${year}-${month}-${day}`;
 }
-
 export function getShanghaiWeekday(date = new Date()): string {
   const formatter = new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -285,7 +345,10 @@ export async function processReport(
   shopSearchResults: SearchResult[],
   eventSearchResults: SearchResult[],
   preferences: Preferences,
-  location: Location
+  location: Location,
+  weatherSearchResults?: SearchResult[],
+  foodSearchResults?: SearchResult[],
+  useLlm = true
 ): Promise<FinalReport> {
   const currentDate = getShanghaiDateString();
   console.log(`[LLM Processor] Starting data synthesis for date: ${currentDate}`);
@@ -304,7 +367,7 @@ export async function processReport(
   }).slice(0, 6);
 
   // If LLM is NOT configured, use Heuristics + Static Summaries
-  if (!openaiClient) {
+  if (!openaiClient || !useLlm) {
     console.log('[LLM Processor] OpenAI API not configured or placeholder detected. Running in heuristic fallback mode.');
     const filteredRss = filterItemsFallback(rssItems, preferences);
     
@@ -369,6 +432,61 @@ export async function processReport(
       }
     ];
 
+    // Mock Jingtian North meals fallback
+    const fallbackMeals = [
+      {
+        name: '小顺天石磨肠粉 (景田店)',
+        cuisine: '广式石磨肠粉 / 粥品小吃',
+        price_range: '人均 15-25 元',
+        suitability_index: '95% (工作日早午餐适宜，来一份双蛋肉碎肠粉配枸杞猪杂汤，快捷暖胃)',
+        reason: '景田街坊口碑相传的石磨肠粉，皮薄香滑，特制酱汁咸甜适中。提供美团外卖，单人快速解决一餐的首选。',
+        address: '深圳市福田区景田北街与景田路交叉口旁巷内',
+        delivery_type: '支持外卖' as const
+      },
+      {
+        name: '面点王 (景田北店)',
+        cuisine: '北方面点 / 快捷面食简餐',
+        price_range: '人均 30-40 元',
+        suitability_index: '90% (工作日单人快速搞定午餐/晚餐的极佳选择)',
+        reason: '出餐非常迅速且卫生稳定，酱骨架、酱香牛肉面和手工饺子水准平均。外卖包装防漏，适合单人办公或吃快餐。',
+        address: '深圳市福田区景田北路景华苑一楼',
+        delivery_type: '支持外卖' as const
+      },
+      {
+        name: '木屋烧烤 (景田店)',
+        cuisine: '烤串 / 深夜烧烤',
+        price_range: '人均 70-90 元',
+        suitability_index: '88% (深夜想要大口撸串解压时的完美选择)',
+        reason: '烤羊肉串、烤生蚝和泼辣猪脆骨调味出色，外卖配送保温效果好，配上一罐冰啤酒是极好的深夜慰藉。',
+        address: '深圳市福田区景新花园 1 楼',
+        delivery_type: '支持外卖' as const
+      },
+      {
+        name: '顺德公猪肚鸡 (景田总店)',
+        cuisine: '顺德菜 / 胡椒猪肚鸡',
+        price_range: '人均 90-120 元',
+        suitability_index: '85% (降温天或周末犒劳自己，热腾腾的汤底暖胃滋补)',
+        reason: '经典胡椒猪肚鸡，汤底浓郁辛香，猪肚爽脆，走地鸡皮滑肉嫩。虽然可以外卖，但更推荐到店体验招牌砂锅慢熬。',
+        address: '深圳市福田区景田北路东景花园一楼',
+        delivery_type: '仅限堂食' as const
+      },
+      {
+        name: '蘩楼 (景田店)',
+        cuisine: '广式早茶 / 手作点心',
+        price_range: '人均 75-95 元',
+        suitability_index: '80% (周末早起叹茶，享受悠闲广式慢生活)',
+        reason: '深圳人气极高的手工茶楼，红米肠、豉汁排骨和露笋虾饺皇是必点。建议线下堂食，以享用刚出炉的口感。',
+        address: '深圳市福田区景田路 82 号中国茶宫 1-3 楼',
+        delivery_type: '仅限堂食' as const
+      }
+    ];
+
+    // Pick 2 meals based on current day of week to provide variety
+    const dayIndex = new Date().getDay();
+    const meal1 = fallbackMeals[dayIndex % fallbackMeals.length];
+    const meal2 = fallbackMeals[(dayIndex + 2) % fallbackMeals.length];
+    const meals = [meal1, meal2];
+
     if (eventSearchResults && eventSearchResults.length > 0) {
       eventSearchResults.slice(0, 2).forEach((res, idx) => {
         filteredEvents.push({
@@ -388,14 +506,15 @@ export async function processReport(
 
     return {
       date: currentDate,
-      summary: `今日快讯 (本地测试模式)：今日共抓取了 ${rssItems.length} 条资讯和 ${bilibiliShows.length} 个展演项目。当前在 ${location.primary} 地区为您推荐了包括《前檐书店》和《Half Coffee》在内的特色生活去处；游戏方面，为您过滤出 ${games_primary.length + games_secondary.length} 篇推荐内容。`,
+      summary: `今日快讯 (本地测试模式)：今日共抓取了 ${rssItems.length} 条资讯和 ${bilibiliShows.length} 个展演项目。当前在 ${location.primary} 地区为您推荐了包括《前檐书店》和《Half Coffee》在内的特色生活去处；游戏方面，为您过滤出 ${games_primary.length + games_secondary.length} 篇推荐内容。就餐方面为您精选了景田北周边的口碑单人外卖与堂食建议。`,
       games_primary,
       games_secondary,
       tech_primary,
       tech_secondary,
       anime: filteredAnime,
       events: filteredEvents,
-      shops: shops
+      shops: shops,
+      meals: meals
     };
   }
 
@@ -450,44 +569,65 @@ Output the results strictly as a JSON object of this structure:
       response_format: { type: 'json_object' }
     });
 
-    const parsedNews = parseCleanJson(newsResponse.choices[0].message.content || '{}');
+    const parsedNews = parseCleanJson<ParsedNewsResponse>(newsResponse.choices[0].message.content || '{}');
     
-    const games_primary = (parsedNews.games_primary || []).map((g: { title: string; description: string; source: string; editor_comment: string }) => {
+    const games_primary = (parsedNews.games_primary || []).map((g) => {
       const match = rssItems.find(item => item.title === g.title || g.title.includes(item.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
     
-    const games_secondary = (parsedNews.games_secondary || []).map((g: { title: string; source: string }) => {
+    const games_secondary = (parsedNews.games_secondary || []).map((g) => {
       const match = rssItems.find(item => item.title === g.title || g.title.includes(item.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
 
-    const tech_primary = (parsedNews.tech_primary || []).map((t: { title: string; description: string; source: string; editor_comment: string }) => {
+    const tech_primary = (parsedNews.tech_primary || []).map((t) => {
       const match = rssItems.find(item => item.title === t.title || t.title.includes(item.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const tech_secondary = (parsedNews.tech_secondary || []).map((t: { title: string; source: string }) => {
+    const tech_secondary = (parsedNews.tech_secondary || []).map((t) => {
       const match = rssItems.find(item => item.title === t.title || t.title.includes(item.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    // 2. Process Local Shop and Activity Recommendations
+    // 2. Process Local Shop, Activity, and Dining Recommendations
+    const diningCenter = location.dining_center || '深圳市福田区景田北';
+    const diningPreferences = preferences.dining || { scenarios: ["外卖", "单人就餐"], categories: ["面食", "小吃简餐", "快餐", "粤菜"] };
+
     const searchPrompt = `
 You are a local lifestyle guide for ${location.primary} and ${location.secondary} areas.
 Today's date is: ${currentDate}
 
+Task 1: Shop recommendations
 The user wants recommendations for Bookstore (书店), Coffee shops (咖啡店/精品咖啡), and Bars (清吧/酒吧) in ${location.primary} (mainly) or ${location.secondary}.
 Shops Info: ${JSON.stringify(shopSearchResults)}
-CPP/Event Info: ${JSON.stringify(eventSearchResults)}
-
 Please select exactly 3 premium shops (ideally one bookstore, one cafe, one bar/pub) and compile them.
-Additionally, describe any interesting events (like CPP doujin events, exhibitions, or art shows).
 
+Task 2: Offline Events
+CPP/Event Info: ${JSON.stringify(eventSearchResults)}
+Describe any interesting events (like CPP doujin events, exhibitions, or art shows).
 CRITICAL TIME REQUIREMENT:
-- You must strictly filter out and IGNORE any events that have already ended prior to today (${currentDate}). For example, do not select events that ended in 2024, 2025, or early 2026.
+- You must strictly filter out and IGNORE any events that have already ended prior to today (${currentDate}).
 - Only select events that are currently active, running, or upcoming (end date >= ${currentDate}).
 - Avoid selecting events that are too far in the future (e.g. starting more than 90 days away from ${currentDate}). Focus on events happening in the next 1-2 months.
+
+Task 3: Daily Meal Recommendations
+Recommend 2-3 daily dining options near "${diningCenter}".
+We crawled the weather for today: ${JSON.stringify(weatherSearchResults)}
+We also crawled popular restaurants/food on Dianping near "${diningCenter}": ${JSON.stringify(foodSearchResults)}
+
+Dining preferences:
+- Dining Center: ${diningCenter}
+- Main Scenarios: ${diningPreferences.scenarios.join('/')} (mainly Takeout 外卖 & Solo Dining 单人就餐)
+- Target Categories: ${diningPreferences.categories.join('/')}
+
+Guidelines for meal recommendations:
+- The user primarily wants to order Takeout (外卖) and eat alone (单人就餐). Prioritize restaurants that support takeout, have great single-portion options (like set meals, noodle bowls, quick bites), and are nearby.
+- If you find an exceptionally high-quality restaurant that does NOT support delivery but is worth a special offline trip, you can recommend it as "仅限堂食", clearly stating it is a "线下特别推荐".
+- Customize the "suitability_index" (今日适宜指数) based on today's weather/weekday. For example, if it's rainy or cold, recommend something warm (like hot soup noodles, pork stomach chicken, porridge) with index like "95% (小雨天气，最适合来一份热腾腾的猪肚鸡/拉面)". If it's very hot, suggest something refreshing (like cold noodles, sushi, coconut chicken) with index like "92% (酷暑难耐，适合吃爽口椰子鸡解暑)".
+- The "reason" should be warm, companion-like, and explain why this restaurant fits the weather, weekday status, or single/takeout preference. Explain what specific dishes to order.
+- Ensure the restaurants recommended are real places from the Dianping search results (or highly credible/realistic ones near Jingtian North).
 
 Output the results strictly as a JSON object:
 {
@@ -496,6 +636,17 @@ Output the results strictly as a JSON object:
   ],
   "extra_events": [
     { "title": "Event Title", "venue": "Venue", "time": "Time", "price": "Price", "city": "City", "link": "link", "source": "Source" }
+  ],
+  "meals": [
+    {
+      "name": "Restaurant/Food Name",
+      "cuisine": "Cuisine style (e.g., 日式拉面, 广式早茶)",
+      "price_range": "Average Cost (e.g., 人均 20-30 元)",
+      "suitability_index": "Suitability index and weather note (e.g., 95% - Rain and chilly, perfect for a warm bowl of soup)",
+      "reason": "Insightful recommendation reason (2-3 sentences)",
+      "address": "Address near ${diningCenter}",
+      "delivery_type": "支持外卖"
+    }
   ]
 }
 `;
@@ -507,11 +658,12 @@ Output the results strictly as a JSON object:
       response_format: { type: 'json_object' }
     });
 
-    const parsedSearch = parseCleanJson(searchResponse.choices[0].message.content || '{}');
+    const parsedSearch = parseCleanJson<ParsedSearchResponse>(searchResponse.choices[0].message.content || '{}');
     const shops: FinalReport['shops'] = parsedSearch.shops || [];
+    const meals: MealRecommendation[] = parsedSearch.meals || [];
     
     if (parsedSearch.extra_events && Array.isArray(parsedSearch.extra_events)) {
-      parsedSearch.extra_events.forEach((evt: { title: string; venue?: string; time?: string; price?: string; city?: string; link?: string; source?: string }, idx: number) => {
+      parsedSearch.extra_events.forEach((evt, idx) => {
         // Apply programmatic filter to filter out past/future events just in case LLM misses
         if (evt.time && !isDateValidForDailyReport(evt.time, currentDate)) {
           console.log(`[LLM Processor] Filtering out extra event due to date range: "${evt.title}" (${evt.time})`);
@@ -544,6 +696,7 @@ Instead of writing a single large paragraph of text, you MUST structure it as a 
 - 🚀 **前沿科技**：总结1-2个科技突破亮点...
 - 📺 **今日番剧**：提到今天放送的精彩番剧...
 - ☕ **生活去处**：用温暖的语言推荐今天挑选的探店去处...
+- 🍱 **就餐建议**：结合今天的天气和心情，简单点明就餐去处...
 
 愿你拥有充实、愉快而美好的一天！✨
 
@@ -551,7 +704,8 @@ Summary of today's content:
 - Games: ${JSON.stringify(games_primary.map(g => g.title))}
 - Shops: ${JSON.stringify(shops.map(s => s.name))}
 - Anime: ${JSON.stringify(filteredAnime.slice(0, 2).map(a => a.title))}
-Write around 150-200 words.
+- Meals: ${JSON.stringify(meals.map(m => m.name))}
+Write around 180-220 words.
 `;
 
     const summaryResponse = await openaiClient.chat.completions.create({
@@ -571,11 +725,23 @@ Write around 150-200 words.
       tech_secondary,
       anime: filteredAnime,
       events: filteredEvents,
-      shops: shops
+      shops: shops,
+      meals: meals
     };
   } catch (err) {
     console.error('[LLM Processor API Error] LLM request failed. Falling back to heuristics:', err);
-    return processReport(rssItems, animeCalendar, bilibiliShows, shopSearchResults, eventSearchResults, preferences, location);
+    return processReport(
+      rssItems,
+      animeCalendar,
+      bilibiliShows,
+      shopSearchResults,
+      eventSearchResults,
+      preferences,
+      location,
+      weatherSearchResults,
+      foodSearchResults,
+      false
+    );
   }
 }
 
@@ -758,32 +924,32 @@ Output strict JSON:
       response_format: { type: 'json_object' }
     });
 
-    const parsedWeekly = parseCleanJson(weeklyResponse.choices[0].message.content || '{}');
+    const parsedWeekly = parseCleanJson<ParsedWeeklyResponse>(weeklyResponse.choices[0].message.content || '{}');
     
     const allOriginalGames = [...allGamesPrimary, ...allGamesSecondary];
     const allOriginalTech = [...allTechPrimary, ...allTechSecondary];
 
-    const games_primary = (parsedWeekly.best_games_primary || []).map((g: { title: string; description: string; source: string; editor_comment: string }) => {
+    const games_primary = (parsedWeekly.best_games_primary || []).map((g) => {
       const match = allOriginalGames.find(orig => orig.title === g.title || g.title.includes(orig.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
     
-    const games_secondary = (parsedWeekly.best_games_secondary || []).map((g: { title: string; source: string }) => {
+    const games_secondary = (parsedWeekly.best_games_secondary || []).map((g) => {
       const match = allOriginalGames.find(orig => orig.title === g.title || g.title.includes(orig.title.slice(0, 5)));
       return { ...g, link: match ? match.link : '#' };
     });
 
-    const tech_primary = (parsedWeekly.best_tech_primary || []).map((t: { title: string; description: string; source: string; editor_comment: string }) => {
+    const tech_primary = (parsedWeekly.best_tech_primary || []).map((t) => {
       const match = allOriginalTech.find(orig => orig.title === t.title || t.title.includes(orig.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const tech_secondary = (parsedWeekly.best_tech_secondary || []).map((t: { title: string; source: string }) => {
+    const tech_secondary = (parsedWeekly.best_tech_secondary || []).map((t) => {
       const match = allOriginalTech.find(orig => orig.title === t.title || t.title.includes(orig.title.slice(0, 5)));
       return { ...t, link: match ? match.link : '#' };
     });
 
-    const shops = parsedWeekly.shops || [];
+    const shops: WeeklyReport['shops'] = parsedWeekly.shops || [];
 
     const stats = {
       total_articles: games_primary.length + games_secondary.length + tech_primary.length + tech_secondary.length,
@@ -880,7 +1046,7 @@ Output the results strictly as a JSON object containing an array of selected ind
       response_format: { type: 'json_object' }
     });
 
-    const parsed = parseCleanJson(response.choices[0].message.content || '{}');
+    const parsed = parseCleanJson<ParsedIndicesResponse>(response.choices[0].message.content || '{}');
     const selectedIndices: number[] = parsed.indices || [];
     console.log(`[LLM Processor] High-value RSS indices selected by LLM: ${JSON.stringify(selectedIndices)}`);
     // Filter to ensure validity

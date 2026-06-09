@@ -49,6 +49,16 @@ interface SecondaryNewsItem {
   source: string;
 }
 
+interface MealRecommendation {
+  name: string;
+  cuisine: string;
+  price_range: string;
+  suitability_index: string;
+  reason: string;
+  address?: string;
+  delivery_type: "支持外卖" | "仅限堂食" | "外卖/堂食皆可";
+}
+
 interface DailyReport {
   date: string;
   summary: string;
@@ -59,6 +69,7 @@ interface DailyReport {
   anime: AnimeItem[];
   events: ActivityItem[];
   shops?: ShopItem[];
+  meals?: MealRecommendation[];
 }
 
 interface WeeklyReport {
@@ -89,6 +100,10 @@ const getTodayWeekday = () => {
 };
 
 const todayWeekday = getTodayWeekday();
+const adminToken = (import.meta.env.VITE_ADMIN_TOKEN || '').trim();
+const getAdminHeaders = (): HeadersInit | undefined => {
+  return adminToken ? { 'X-Admin-Token': adminToken } : undefined;
+};
 
 function App() {
   const [activeTab, setActiveTab] = useState<'daily' | 'weekly' | 'anime'>('daily');
@@ -192,7 +207,7 @@ function App() {
   const handleCrawl = async () => {
     setCrawling(true);
     try {
-      const res = await fetch('/api/crawl', { method: 'POST' });
+      const res = await fetch('/api/crawl', { method: 'POST', headers: getAdminHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -217,7 +232,7 @@ function App() {
     }
     setUpdating(true);
     try {
-      const res = await fetch('/api/update', { method: 'POST' });
+      const res = await fetch('/api/update', { method: 'POST', headers: getAdminHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -791,6 +806,58 @@ function App() {
                     <div className="empty-state">
                       <span className="empty-icon">📺</span>
                       <span>今日没有新番放送</span>
+                    </div>
+                  )}
+                </section>
+
+                {/* Daily Meal Recommendations Section */}
+                <section>
+                  <h2 className="section-title meal-title">🍱 今日就餐建议 (外卖 & 单人友好)</h2>
+                  {activeDailyReport.meals && activeDailyReport.meals.length > 0 ? (
+                    <div className="cards-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+                      {activeDailyReport.meals.map((meal, i) => (
+                        <div key={i} className="meal-card">
+                          <div className="meal-card-header">
+                            <h4 className="meal-name">{meal.name}</h4>
+                            <span className={`delivery-badge ${meal.delivery_type === '支持外卖' ? 'badge-delivery-takeout' : 'badge-delivery-dinein'}`}>
+                              {meal.delivery_type}
+                            </span>
+                          </div>
+                          <div className="meal-card-body">
+                            <div className="meal-meta-row">
+                              <span className="meal-cuisine-tag">{meal.cuisine}</span>
+                              <span className="meal-price-tag">{meal.price_range}</span>
+                            </div>
+                            
+                            <div className="meal-suitability-box">
+                              <span className="suitability-icon">🌡️</span>
+                              <span className="suitability-text">{meal.suitability_index}</span>
+                            </div>
+                            
+                            <p className="meal-reason-text">{meal.reason}</p>
+                            
+                            {meal.address && (
+                              <div className="meal-address-box">
+                                <span className="address-icon">📍</span>
+                                <span className="address-text" title={meal.address}>{meal.address}</span>
+                                <a 
+                                  className="meal-map-btn"
+                                  href={`https://map.baidu.com/?newmap=1&ie=utf-8&s=s%26wd%3D${encodeURIComponent('深圳市福田区 ' + meal.name)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  🗺️ 导航
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <span className="empty-icon">🍱</span>
+                      <span>今日暂无就餐建议</span>
                     </div>
                   )}
                 </section>

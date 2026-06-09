@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && tsc -p tsconfig.scraper.json --noEmit && vite build",
+    "typecheck:scraper": "tsc -p tsconfig.scraper.json --noEmit",
     "lint": "eslint .",
     "preview": "vite preview",
     "crawl": "tsx scraper/index.ts",
