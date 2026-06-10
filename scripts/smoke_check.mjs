@@ -28,8 +28,11 @@ const scraper = read('scraper/index.ts');
 
 assertIncludes('feedback GET endpoint exists', server, "if (req.method === 'GET')");
 assertOrder('feedback GET is handled before POST-only guard', server, "if (req.method === 'GET')", 'if (!requireAdminPost(req, res)) return;');
+assertIncludes('feedback DELETE endpoint exists', server, "if (req.method === 'DELETE')");
+assertOrder('feedback DELETE is handled before POST-only guard', server, "if (req.method === 'DELETE')", 'if (!requireAdminPost(req, res)) return;');
 assertIncludes('read_later is accepted by API', server, "'read_later'");
 assertIncludes('frontend fetches feedback collection', app, "fetch('/api/feedback'");
+assertIncludes('frontend can delete saved feedback', app, "method: 'DELETE'");
 assertIncludes('frontend handles stale backend 405', app, '后端还不支持读取收藏夹');
 assertIncludes('favorites tab exists', app, "activeTab === 'favorites'");
 assertIncludes('read later tab exists', app, "activeTab === 'read_later'");

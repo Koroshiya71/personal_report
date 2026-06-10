@@ -319,8 +319,7 @@ body {
   background: rgba(99, 102, 241, 0.08);
 }
 
-.saved-item-meta,
-.saved-item-footer {
+.saved-item-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -334,6 +333,34 @@ body {
   margin: 0;
   font-size: 16px;
   line-height: 1.55;
+}
+
+.saved-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.saved-item-actions a,
+.saved-item-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 12px;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.saved-item-actions a:hover,
+.saved-item-actions button:hover {
+  color: var(--text-primary);
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.12);
 }
 
 .saved-empty-state {

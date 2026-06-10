@@ -159,11 +159,17 @@ function App() {
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    setToasts((prev) => {
+      const maxId = prev.reduce((max, toast) => {
+        const value = Number(toast.id.replace('toast-', ''));
+        return Number.isFinite(value) ? Math.max(max, value) : max;
+      }, 0);
+      const id = `toast-${maxId + 1}`;
+      window.setTimeout(() => {
+        setToasts((current) => current.filter((toast) => toast.id !== id));
+      }, 4000);
+      return [...prev, { id, message, type }];
+    });
   };
 
   const saveAdminToken = (nextToken: string) => {
@@ -255,6 +261,32 @@ function App() {
       showToast(label, 'success');
     } catch {
       showToast('连接反馈接口失败。', 'error');
+    }
+  };
+
+  const removeSavedFeedback = async (type: 'favorite' | 'read_later', item: FeedbackEntry) => {
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(getAdminHeaders(adminToken) || {}),
+        },
+        body: JSON.stringify({
+          type,
+          itemTitle: item.itemTitle,
+          itemCategory: item.itemCategory,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showAdminTokenHint(res.status, data.error || '移除失败。');
+        return;
+      }
+      await loadFeedbackEntries();
+      showToast(type === 'favorite' ? '已从收藏夹移除' : '已从稍后再读移除', 'success');
+    } catch {
+      showToast('连接收藏数据接口失败。', 'error');
     }
   };
 
@@ -657,37 +689,42 @@ function App() {
 
         {items.length > 0 ? (
           <div className="saved-items-grid">
-            {items.map((item, index) => {
-              const content = (
-                <>
-                  <div className="saved-item-meta">
-                    <span>{categoryLabel(item.itemCategory)}</span>
-                    <span>{formatSavedTime(item.createdAt)}</span>
-                  </div>
-                  <h3>{item.itemTitle}</h3>
-                  <div className="saved-item-footer">
-                    <span>{item.itemLink ? '打开原文' : '暂无链接'}</span>
-                    {item.itemLink && <span>→</span>}
-                  </div>
-                </>
-              );
-
-              return item.itemLink ? (
-                <a
-                  className="saved-item-card"
-                  href={item.itemLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  key={`${item.itemCategory}-${item.itemTitle}-${index}`}
-                >
-                  {content}
-                </a>
-              ) : (
-                <div className="saved-item-card" key={`${item.itemCategory}-${item.itemTitle}-${index}`}>
-                  {content}
+            {items.map((item, index) => (
+              <div className="saved-item-card" key={`${item.itemCategory}-${item.itemTitle}-${index}`}>
+                <div className="saved-item-meta">
+                  <span>{categoryLabel(item.itemCategory)}</span>
+                  <span>{formatSavedTime(item.createdAt)}</span>
                 </div>
-              );
-            })}
+                <h3>{item.itemTitle}</h3>
+                <div className="saved-item-actions">
+                  {item.itemLink ? (
+                    <a href={item.itemLink} target="_blank" rel="noopener noreferrer">
+                      打开原文 →
+                    </a>
+                  ) : (
+                    <span>暂无链接</span>
+                  )}
+                  {type === 'favorite' ? (
+                    <button
+                      type="button"
+                      onClick={() => sendFeedback('read_later', item.itemTitle, item.itemCategory, item.itemLink)}
+                    >
+                      稍后读
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => sendFeedback('favorite', item.itemTitle, item.itemCategory, item.itemLink)}
+                    >
+                      收藏
+                    </button>
+                  )}
+                  <button type="button" onClick={() => removeSavedFeedback(type, item)}>
+                    移除
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="empty-state saved-empty-state">

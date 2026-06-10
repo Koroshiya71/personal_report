@@ -301,6 +301,48 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'DELETE') {
+      if (!isAuthorized(req)) {
+        sendJson(res, ADMIN_TOKEN ? 401 : 503, {
+          success: false,
+          error: ADMIN_TOKEN ? 'Unauthorized' : 'Mutation APIs are disabled until ADMIN_TOKEN is configured.',
+        });
+        return;
+      }
+
+      try {
+        const body = await readJsonBody(req);
+        const type = typeof body.type === 'string' ? body.type : '';
+        const itemTitle = typeof body.itemTitle === 'string' ? body.itemTitle.trim() : '';
+        const itemCategory = typeof body.itemCategory === 'string' ? body.itemCategory.trim() : '';
+        const removableTypes = new Set(['favorite', 'read_later']);
+
+        if (!removableTypes.has(type) || !itemTitle) {
+          sendJson(res, 400, { success: false, error: 'Invalid feedback delete payload.' });
+          return;
+        }
+
+        const feedback = loadFeedback();
+        const originalCount = feedback.entries.length;
+        feedback.entries = feedback.entries.filter((entry) => {
+          return !(
+            entry.type === type &&
+            entry.itemTitle === itemTitle &&
+            (!itemCategory || entry.itemCategory === itemCategory)
+          );
+        });
+        saveFeedback(feedback);
+        sendJson(res, 200, {
+          success: true,
+          removed: originalCount - feedback.entries.length,
+          total: feedback.entries.length,
+        });
+      } catch (error) {
+        sendJson(res, 400, { success: false, error: error instanceof Error ? error.message : 'Invalid request.' });
+      }
+      return;
+    }
+
     if (!requireAdminPost(req, res)) return;
 
     try {
